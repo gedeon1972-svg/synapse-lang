@@ -53,6 +53,14 @@ _BUILTINS: dict[str, str] = {
     'salir': 'void',
 }
 
+_RUNTIME_BUILTINS: frozenset = frozenset({
+    'escribir', 'escribir_linea', 'leer_linea', 'abrir', 'leer', 'cerrar',
+    'math_crear_tensor', 'math_suma_tensor', 'math_producto_punto', 'math_relu',
+    'mem_reserva', 'mem_libera', 'math_suma', 'math_producto',
+    'crear_tensor', 'suma_tensor', 'producto_punto', 'relu',
+    'reserva', 'libera', 'suma', 'producto',
+})
+
 
 def _traducir_tipo_c(tipo_synapse: str) -> str:
     tipo_c = MAPA_TIPOS_C.get(tipo_synapse)
@@ -163,94 +171,29 @@ class GeneradorC:
         self._push("")
         self._push("typedef struct { uint32_t filas; uint32_t columnas; float* datos; } Tensor;")
         self._push("")
-        self._push("typedef struct { FILE* stream; int es_valido; } Canal;")
+        self._push("typedef struct { FILE* stream; int es_valido; int es_virtual; const char* virtual_data; int virtual_len; } Canal;")
         self._push("")
-        self._push("// Pool de memoria de bloques fijos")
+        self._push("// Constantes del pool de memoria (definidas en synapse_rt.c)")
         self._push("#define POOL_BLOQUES 64")
         self._push("#define TAMANO_BLOQUE 4096")
-        self._push("typedef struct {")
-        self._push("    uint8_t* pool_base;")
-        self._push("    uint32_t* bitmap;")
-        self._push("    uint32_t total_blocks;")
-        self._push("    uint32_t block_size;")
-        self._push("} MemoryPool;")
-        self._push("static MemoryPool _g_pool;")
         self._push("")
-        self._push("void pool_init(uint32_t total_blocks, uint32_t block_size) {")
-        self.indent += 1
-        self._push("_g_pool.total_blocks = total_blocks;")
-        self._push("_g_pool.block_size = block_size;")
-        self._push("_g_pool.pool_base = (uint8_t*)malloc(total_blocks * block_size);")
-        self._push("uint32_t _words = (total_blocks + 31) / 32;")
-        self._push("_g_pool.bitmap = (uint32_t*)calloc(_words, sizeof(uint32_t));")
-        self._push("if (!_g_pool.pool_base || !_g_pool.bitmap) {")
-        self.indent += 1
-        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: pool_init fallo\\n");')
-        self._push("exit(1);")
-        self.indent -= 1
-        self._push("}")
-        self.indent -= 1
-        self._push("}")
-        self._push("")
-        self._push("void* pool_alloc() {")
-        self.indent += 1
-        self._push("uint32_t _words = (_g_pool.total_blocks + 31) / 32;")
-        self._push("for (uint32_t _w = 0; _w < _words; _w++) {")
-        self.indent += 1
-        self._push("if (_g_pool.bitmap[_w] != 0xFFFFFFFF) {")
-        self.indent += 1
-        self._push("uint32_t _bits = ~_g_pool.bitmap[_w];")
-        self._push("uint32_t _b = 0;")
-        self._push("while (!(_bits & (1u << _b))) { _b++; }")
-        self._push("uint32_t _index = _w * 32 + _b;")
-        self._push("if (_index >= _g_pool.total_blocks) break;")
-        self._push("_g_pool.bitmap[_w] |= (1u << _b);")
-        self._push("return _g_pool.pool_base + _index * _g_pool.block_size;")
-        self.indent -= 1
-        self._push("}")
-        self.indent -= 1
-        self._push("}")
-        self._push("return NULL;")
-        self.indent -= 1
-        self._push("}")
-        self._push("")
-        self._push("void pool_free(void* ptr) {")
-        self.indent += 1
-        self._push("if (ptr >= (void*)_g_pool.pool_base")
-        self._push("    && ptr < (void*)(_g_pool.pool_base + _g_pool.total_blocks * _g_pool.block_size)) {")
-        self.indent += 1
-        self._push("uint32_t _index = (uint32_t)((uint8_t*)ptr - _g_pool.pool_base) / _g_pool.block_size;")
-        self._push("uint32_t _w = _index / 32;")
-        self._push("uint32_t _b = _index % 32;")
-        self._push("_g_pool.bitmap[_w] &= ~(1u << _b);")
-        self.indent -= 1
-        self._push("} else {")
-        self.indent += 1
-        self._push("free(ptr);")
-        self.indent -= 1
-        self._push("}")
-        self.indent -= 1
-        self._push("}")
-        self._push("")
-        self._push("static inline float* _pool_malloc(size_t tamano) {")
-        self.indent += 1
-        self._push("if (tamano <= TAMANO_BLOQUE) {")
-        self.indent += 1
-        self._push("float* _p = (float*)pool_alloc();")
-        self._push("if (_p) return _p;")
-        self._push('fprintf(stderr, "ADVERTENCIA: pool agotado, usando malloc\\n");')
-        self.indent -= 1
-        self._push("}")
-        self._push("float* _p = (float*)malloc(tamano);")
-        self._push("if (!_p) {")
-        self.indent += 1
-        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: malloc fallo\\n");')
-        self._push("exit(1);")
-        self.indent -= 1
-        self._push("}")
-        self._push("return _p;")
-        self.indent -= 1
-        self._push("}")
+        self._push("// --- Declaraciones extern del runtime precompilado (synapse_rt.o) ---")
+        self._push("extern void pool_init(uint32_t total_blocks, uint32_t block_size);")
+        self._push("extern void pool_free(void* ptr);")
+        self._push("extern void escribir(CadenaSegura contenido);")
+        self._push("extern void escribir_linea(CadenaSegura contenido);")
+        self._push("extern CadenaSegura leer_linea(void);")
+        self._push("extern Canal abrir(CadenaSegura ruta, CadenaSegura modo);")
+        self._push("extern CadenaSegura leer(Canal canal);")
+        self._push("extern void cerrar(Canal canal);")
+        self._push("extern Tensor crear_tensor(int filas, int columnas);")
+        self._push("extern Tensor suma_tensor(Tensor a, Tensor b);")
+        self._push("extern Tensor producto_punto(Tensor a, Tensor b);")
+        self._push("extern Tensor relu(Tensor a);")
+        self._push("extern Tensor reserva(int tamano);")
+        self._push("extern void libera(Tensor bloque);")
+        self._push("extern Tensor suma(Tensor a, Tensor b);")
+        self._push("extern Tensor producto(Tensor a, Tensor b);")
         self._push("")
 
     def _visitar(self, nodo: Nodo):
@@ -298,11 +241,11 @@ class GeneradorC:
             return
         self._funciones_emitidas.add(nodo.nombre)
 
-        if nodo.nombre in ('reserva', 'libera', 'abrir', 'leer', 'escribir', 'escribir_linea', 'leer_linea', 'cerrar',
-                           'suma', 'producto', 'relu', 'crear_tensor', 'suma_tensor', 'producto_punto',
-                           'tokenizar', 'parsear', 'generar'):
+        if nodo.nombre in ('tokenizar', 'parsear', 'generar'):
             getattr(self, f'_emitir_{nodo.nombre}')(nodo)
             return
+        if nodo.nombre in _RUNTIME_BUILTINS:
+            return  # Implementaciones en synapse_rt.c (linkar con synapse_rt.o)
 
         self._variables = {}
         self._tensor_vars = set()
@@ -366,7 +309,15 @@ class GeneradorC:
     def _emitir_abrir(self, nodo: DefinicionFuncion):
         self._push("Canal abrir(CadenaSegura ruta, CadenaSegura modo) {")
         self.indent += 1
-        self._push("Canal _c;")
+        self._push("Canal _c = {0};")
+        self._push('_c.es_virtual = 0;')
+        self._push('if (strcmp(ruta.datos, "librerias/compiler/ast_nodes.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_AST; _c.virtual_len = (int)strlen(LIB_AST); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/compiler/lexer.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_LEXER; _c.virtual_len = (int)strlen(LIB_LEXER); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/compiler/parser.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_PARSER; _c.virtual_len = (int)strlen(LIB_PARSER); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/compiler/generator.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_GENERATOR; _c.virtual_len = (int)strlen(LIB_GENERATOR); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/std/io.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_IO; _c.virtual_len = (int)strlen(LIB_IO); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/std/mem.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_MEM; _c.virtual_len = (int)strlen(LIB_MEM); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/std/math.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_MATH; _c.virtual_len = (int)strlen(LIB_MATH); _c.es_valido = 1; return _c; }')
         self._push("_c.stream = fopen(ruta.datos, modo.datos);")
         self._push("_c.es_valido = (_c.stream != NULL) ? 1 : 0;")
         self._push("if (!_c.es_valido) {")
@@ -383,6 +334,15 @@ class GeneradorC:
         self._push("CadenaSegura leer(Canal canal) {")
         self.indent += 1
         self._push('if (!canal.es_valido) { return (CadenaSegura){ .longitud = 0, .datos = "" }; }')
+        self._push("if (canal.es_virtual) {")
+        self.indent += 1
+        self._push("char* _buf = (char*)malloc(canal.virtual_len + 1);")
+        self._push('if (!_buf) { return (CadenaSegura){ .longitud = 0, .datos = "" }; }')
+        self._push("memcpy(_buf, canal.virtual_data, canal.virtual_len);")
+        self._push("_buf[canal.virtual_len] = '\\0';")
+        self._push("return (CadenaSegura){ .longitud = canal.virtual_len, .datos = (const char*)_buf };")
+        self.indent -= 1
+        self._push("}")
         self._push("fseek(canal.stream, 0, SEEK_END);")
         self._push("long _tam = ftell(canal.stream);")
         self._push("rewind(canal.stream);")
@@ -436,6 +396,7 @@ class GeneradorC:
     def _emitir_cerrar(self, nodo: DefinicionFuncion):
         self._push("void cerrar(Canal canal) {")
         self.indent += 1
+        self._push("if (canal.es_virtual) { return; }")
         self._push("if (canal.stream) {")
         self.indent += 1
         self._push("fclose(canal.stream);")
@@ -1206,6 +1167,29 @@ static struct Nodo* """ + _P + """prim() {
                 struct Identificador* obj=(struct Identificador*)calloc(1,sizeof(struct Identificador));
                 obj->tipo=""" + _P + """cs("Identificador"); obj->nombre=""" + _P + """cs(_nm);
                 strcpy(_nm, """ + _P + """mirar()->val); """ + _P + """avanzar();
+                if (""" + _P + """mirar()->tipo==T_LPAREN) {
+                    free(obj);
+                    """ + _P + """avanzar();
+                    struct ListaNodo* args=NULL; struct ListaNodo** acur=&args;
+                    if (""" + _P + """mirar()->tipo!=T_RPAREN) {
+                        while (1) {
+                            if (""" + _P + """mirar()->tipo==T_ARROW) {
+                                """ + _P + """avanzar();
+                                struct Nodo* ae=""" + _P + """expr();
+                                struct ArgumentoTransferido* at=(struct ArgumentoTransferido*)calloc(1,sizeof(struct ArgumentoTransferido));
+                                at->tipo=""" + _P + """cs("ArgumentoTransferido"); at->expr=ae;
+                                *acur=""" + _P + """mk_list((struct Nodo*)at,NULL);
+                            } else { *acur=""" + _P + """mk_list(""" + _P + """expr(),NULL); }
+                            acur=&(*acur)->cola;
+                            if (""" + _P + """mirar()->tipo!=T_COMMA) break;
+                            """ + _P + """avanzar();
+                        }
+                    }
+                    """ + _P + """esperar(T_RPAREN);
+                    struct LlamadaFuncion* n=(struct LlamadaFuncion*)calloc(1,sizeof(struct LlamadaFuncion));
+                    n->tipo=""" + _P + """cs("LlamadaFuncion"); n->nombre=""" + _P + """cs(_nm); n->argumentos=args;
+                    return (struct Nodo*)n;
+                }
                 struct ExprAccesoCampo* n=(struct ExprAccesoCampo*)calloc(1,sizeof(struct ExprAccesoCampo));
                 n->tipo=""" + _P + """cs("ExprAccesoCampo"); n->objeto=(struct Nodo*)obj; n->nombre_campo=""" + _P + """cs(_nm);
                 return (struct Nodo*)n;
@@ -1309,6 +1293,7 @@ static void {_PH}ea(struct Nodo* n, char* b, int sz) {{
     if(strcmp(t,"OpUnaria")==0){{ struct OpUnaria* x=(struct OpUnaria*)n; {_PH}ea(x->expr,i,512); char _o[16]; {_PH}cp(_o,x->operador->lexema); snprintf(b,sz,"(%s%s)",_o,i); return; }}
     if(strcmp(t,"LlamadaFuncion")==0){{
         struct LlamadaFuncion* x=(struct LlamadaFuncion*)n; {_PH}cp(m,x->nombre);
+        {{ char* _p=m; while(*_p){{ if(*_p=='.') *_p='_'; _p++; }} }}
         char a[4096]=""; int p=0; struct ListaNodo* c=x->argumentos;
         while(c){{ if(p>0){{ a[p++]=','; a[p++]=' '; }} {_PH}ea(c->cabeza,i,512); int k=0; while(i[k]) a[p++]=i[k++]; c=c->cola; }}
         a[p]=0; snprintf(b,sz,"%s(%s)",m,a); return;
@@ -1360,6 +1345,8 @@ static void {_PH}v(struct Nodo* n) {{
     if(strcmp(t,"DefinicionFuncion")==0){{
         {_PH}reset();
         struct DefinicionFuncion* f=(struct DefinicionFuncion*)n; {_PH}cp(m,f->nombre);
+        {{ char* _p=m; while(*_p){{ if(*_p=='.') *_p='_'; _p++; }} }}
+        if(strcmp(m,"escribir")==0||strcmp(m,"escribir_linea")==0||strcmp(m,"leer_linea")==0||strcmp(m,"abrir")==0||strcmp(m,"leer")==0||strcmp(m,"cerrar")==0||strcmp(m,"crear_tensor")==0||strcmp(m,"suma_tensor")==0||strcmp(m,"producto_punto")==0||strcmp(m,"relu")==0||strcmp(m,"reserva")==0||strcmp(m,"libera")==0||strcmp(m,"suma")==0||strcmp(m,"producto")==0||strcmp(m,"math_crear_tensor")==0||strcmp(m,"math_suma_tensor")==0||strcmp(m,"math_producto_punto")==0||strcmp(m,"math_relu")==0||strcmp(m,"mem_reserva")==0||strcmp(m,"mem_libera")==0||strcmp(m,"math_suma")==0||strcmp(m,"math_producto")==0) return;
         char ps[4096]="void"; int pp=0,fi=1; struct ListaParametro* pc=f->parametros;
         while(pc){{ struct Parametro* p=(struct Parametro*)pc->cabeza; char pn[256]; {_PH}cp(pn,p->nombre); char pt[256]; {_PH}cp(pt,p->tipo_param);
             if(fi){{ pp=0; fi=0; }}else{{ ps[pp++]=','; ps[pp++]=' '; }}
@@ -1427,8 +1414,23 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
     fprintf({_PH}out,"#include <stdio.h>\\n#include <stdlib.h>\\n#include <stdint.h>\\n#include <string.h>\\n#include <pthread.h>\\n");
     fprintf({_PH}out,"typedef struct {{int longitud;const char* datos;}} CadenaSegura;\\n");
     fprintf({_PH}out,"typedef struct {{uint32_t filas;uint32_t columnas;float* datos;}} Tensor;\\n");
-    fprintf({_PH}out,"typedef struct {{FILE* stream;int es_valido;}} Canal;\\n");
+    fprintf({_PH}out,"typedef struct {{FILE* stream;int es_valido;int es_virtual;const char* virtual_data;int virtual_len;}} Canal;\\n");
     fprintf({_PH}out,"#define nulo 0\\n");
+    fprintf({_PH}out,"// --- Declaraciones extern del runtime precompilado (synapse_rt.o) ---\\n");
+    fprintf({_PH}out,"extern void escribir(CadenaSegura contenido);\\n");
+    fprintf({_PH}out,"extern void escribir_linea(CadenaSegura contenido);\\n");
+    fprintf({_PH}out,"extern CadenaSegura leer_linea(void);\\n");
+    fprintf({_PH}out,"extern Canal abrir(CadenaSegura ruta, CadenaSegura modo);\\n");
+    fprintf({_PH}out,"extern CadenaSegura leer(Canal canal);\\n");
+    fprintf({_PH}out,"extern void cerrar(Canal canal);\\n");
+    fprintf({_PH}out,"extern Tensor crear_tensor(int filas, int columnas);\\n");
+    fprintf({_PH}out,"extern Tensor suma_tensor(Tensor a, Tensor b);\\n");
+    fprintf({_PH}out,"extern Tensor producto_punto(Tensor a, Tensor b);\\n");
+    fprintf({_PH}out,"extern Tensor relu(Tensor a);\\n");
+    fprintf({_PH}out,"extern Tensor reserva(int tamano);\\n");
+    fprintf({_PH}out,"extern void libera(Tensor bloque);\\n");
+    fprintf({_PH}out,"extern Tensor suma(Tensor a, Tensor b);\\n");
+    fprintf({_PH}out,"extern Tensor producto(Tensor a, Tensor b);\\n");
     fprintf({_PH}out,"static int _g_argc;\\nstatic char** _g_argv;\\nint _argc(){{return _g_argc;}}\\n");
     fprintf({_PH}out,"CadenaSegura _argv(int i){{if(i<0||i>=_g_argc)return (CadenaSegura){{0,(char*)\\"\\"}};return (CadenaSegura){{.longitud=(int)strlen(_g_argv[i]),.datos=_g_argv[i]}};}}\\n");
     fprintf({_PH}out,"void salir(int c){{exit(c);}}\\n");
@@ -1436,6 +1438,9 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
     // Forward declarations
     struct ListaNodo* c=programa.sentencias;
     while(c){{ if(c->cabeza&&strcmp(c->cabeza->tipo.datos,"DefinicionEstructura")==0){{ struct DefinicionEstructura* d=(struct DefinicionEstructura*)c->cabeza; fprintf({_PH}out,"struct %s;\\n",d->nombre.datos); }} c=c->cola; }}
+    // Function prototypes
+    c=programa.sentencias;
+    while(c){{ if(c->cabeza&&strcmp(c->cabeza->tipo.datos,"DefinicionFuncion")==0){{ struct DefinicionFuncion* f=(struct DefinicionFuncion*)c->cabeza; char _fn[256]; {_PH}cp(_fn,f->nombre); {{ char* _p=_fn; while(*_p){{ if(*_p=='.') *_p='_'; _p++; }} }} if(strcmp(_fn,"escribir")==0||strcmp(_fn,"escribir_linea")==0||strcmp(_fn,"leer_linea")==0||strcmp(_fn,"abrir")==0||strcmp(_fn,"leer")==0||strcmp(_fn,"cerrar")==0||strcmp(_fn,"crear_tensor")==0||strcmp(_fn,"suma_tensor")==0||strcmp(_fn,"producto_punto")==0||strcmp(_fn,"relu")==0||strcmp(_fn,"reserva")==0||strcmp(_fn,"libera")==0||strcmp(_fn,"suma")==0||strcmp(_fn,"producto")==0||strcmp(_fn,"math_crear_tensor")==0||strcmp(_fn,"math_suma_tensor")==0||strcmp(_fn,"math_producto_punto")==0||strcmp(_fn,"math_relu")==0||strcmp(_fn,"mem_reserva")==0||strcmp(_fn,"mem_libera")==0||strcmp(_fn,"math_suma")==0||strcmp(_fn,"math_producto")==0) {{ c=c->cola; continue; }} char _ps[4096]="void"; int _pp=0,_fi=1; struct ListaParametro* _pc=f->parametros; while(_pc){{ struct Parametro* p=(struct Parametro*)_pc->cabeza; char _pn[256]; {_PH}cp(_pn,p->nombre); char _pt[256]; {_PH}cp(_pt,p->tipo_param); if(_fi){{ _pp=0; _fi=0; }}else{{ _ps[_pp++]=','; _ps[_pp++]=' '; }} const char* _ct={_PH}mt(_pt); char _tb[64]; if(_ct){{ strcpy(_tb,_ct); }}else{{ snprintf(_tb,sizeof(_tb),"struct %s",_pt); }} _ct=_tb; int _k=0; while(_ct[_k]) _ps[_pp++]=_ct[_k++]; _ps[_pp++]=' '; _k=0; while(_pn[_k]) _ps[_pp++]=_pn[_k++]; _pc=_pc->cola; }} _ps[_pp]=0; char _rt[64]; {_PH}cp(_rt,f->tipo_retorno); const char* _rct={_PH}mt(_rt); if(_rct){{ fprintf({_PH}out,"%s %s(%s);\\n",_rct,_fn,_ps); }}else{{ fprintf({_PH}out,"struct %s %s(%s);\\n",_rt,_fn,_ps); }} }} c=c->cola; }}
     {_PH}indent=0; c=programa.sentencias;
     while(c){{ {_PH}v(c->cabeza); c=c->cola; }}
     // main()
@@ -1695,7 +1700,8 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
                 else:
                     args_parts.append(self._expr_a_c(a))
             args = ", ".join(args_parts)
-            return f"{nodo.nombre}({args})"
+            _nombre = nodo.nombre.replace('.', '_')
+            return f"{_nombre}({args})"
         if isinstance(nodo, ArgumentoTransferido):
             return self._expr_a_c(nodo.expr)
         if isinstance(nodo, ExprAccesoCampo):
