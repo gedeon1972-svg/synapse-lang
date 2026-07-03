@@ -1,0 +1,45 @@
+{
+  "synapse": "2.0",
+  "ast": {
+    "_tipo": "Programa",
+    "sentencias": [
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "obtener_datos",
+        "parametros": [],
+        "tipo_retorno": "entero",
+        "cuerpo": [
+          {
+            "_tipo": "AsignacionVariable",
+            "nombre": "dato",
+            "expresion": {
+              "_tipo": "LiteralNumero",
+              "valor": 42
+            }
+          },
+          {
+            "_tipo": "LogLlamada",
+            "argumentos": [
+              {
+                "_tipo": "LiteralCadena",
+                "valor": "[nucleo.memoria] Dato interno obtenido: "
+              },
+              {
+                "_tipo": "Identificador",
+                "nombre": "dato"
+              }
+            ]
+          },
+          {
+            "_tipo": "SentenciaRetornar",
+            "expr": {
+              "_tipo": "Identificador",
+              "nombre": "dato"
+            },
+            "es_transferencia": false
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+#lang: es
+// lexer.syn — Tokenizador para el compilador Synapse (auto-hospedaje)
+// La implementacion real en C es emitida por el generador.
+// Este archivo define la interfaz publica del modulo.
+
+funcion tokenizar(fuente: texto) -> int:
+    retornar 0

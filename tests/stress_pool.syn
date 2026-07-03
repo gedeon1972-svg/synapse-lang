@@ -1,0 +1,14 @@
+#lang: es
+// Prueba de estres: asigna y libera 10000 tensores
+importar std.mem
+
+funcion principal() -> nulo:
+    i = 0
+    mientras i < 10000:
+        t = reserva(256)
+        libera(-> t)
+        i = i + 1
+    // Prueba asignacion grande que excede TAMANO_BLOQUE
+    g = reserva(8192)
+    libera(-> g)
+    log("prueba de estres completada")

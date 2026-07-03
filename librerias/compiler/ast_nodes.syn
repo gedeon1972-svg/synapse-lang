@@ -1,0 +1,149 @@
+#lang: es
+// ast_nodes.syn — Tipos compuestos del AST en Synapse puro
+// Cada estructura define un nodo del arbol. Los campos que apuntan
+// a otras estructuras del AST se convierten automaticamente en
+// punteros en C para evitar recursion infinita en el tipo.
+
+estructura Token:
+    tipo: entero
+    lexema: texto
+    linea: entero
+    columna: entero
+
+estructura Nodo:
+    tipo: texto
+
+estructura ListaNodo:
+    cabeza: Nodo
+    cola: ListaNodo
+
+estructura Programa:
+    tipo: texto
+    sentencias: ListaNodo
+
+estructura Identificador:
+    tipo: texto
+    nombre: texto
+
+estructura LiteralNumero:
+    tipo: texto
+    valor: entero
+
+estructura LiteralCadena:
+    tipo: texto
+    valor: texto
+
+estructura OpBinaria:
+    tipo: texto
+    izquierdo: Nodo
+    operador: Token
+    derecho: Nodo
+
+estructura OpUnaria:
+    tipo: texto
+    operador: Token
+    expr: Nodo
+
+estructura LlamadaFuncion:
+    tipo: texto
+    nombre: texto
+    argumentos: ListaNodo
+
+estructura ExprAccesoCampo:
+    tipo: texto
+    objeto: Nodo
+    nombre_campo: texto
+
+estructura AsignacionVariable:
+    tipo: texto
+    nombre: texto
+    expresion: Nodo
+
+estructura AsignacionCampo:
+    tipo: texto
+    objeto: Nodo
+    nombre_campo: texto
+    expresion: Nodo
+
+estructura SentenciaSi:
+    tipo: texto
+    condicion: Nodo
+    cuerpo: ListaNodo
+    cuerpo_sino: ListaNodo
+
+estructura SentenciaMientras:
+    tipo: texto
+    condicion: Nodo
+    cuerpo: ListaNodo
+
+estructura SentenciaRetornar:
+    tipo: texto
+    expr: Nodo
+
+estructura SentenciaExpr:
+    tipo: texto
+    expr: Nodo
+
+estructura LogLlamada:
+    tipo: texto
+    argumentos: ListaNodo
+
+estructura Parametro:
+    tipo: texto
+    nombre: texto
+    tipo_param: texto
+    es_transferencia: booleano
+
+estructura ListaParametro:
+    cabeza: Parametro
+    cola: ListaParametro
+
+estructura DefinicionFuncion:
+    tipo: texto
+    nombre: texto
+    parametros: ListaParametro
+    tipo_retorno: texto
+    cuerpo: ListaNodo
+
+estructura DefinicionEstructura:
+    tipo: texto
+    nombre: texto
+    campos: ListaParametro
+
+estructura SentenciaRomper:
+    tipo: texto
+
+estructura SentenciaSiguiente:
+    tipo: texto
+
+estructura SentenciaLanzar:
+    tipo: texto
+    llamada: Nodo
+
+estructura SentenciaRecuperar:
+    tipo: texto
+    accion_critica: Nodo
+    plan_b: Nodo
+
+estructura SentenciaEscuchar:
+    tipo: texto
+    canal: Nodo
+    respuesta: Nodo
+
+estructura ExprTensor:
+    tipo: texto
+    filas: Nodo
+    columnas: Nodo
+
+estructura ExprIndice:
+    tipo: texto
+    expr: Nodo
+    indice: Nodo
+
+estructura ArgumentoTransferido:
+    tipo: texto
+    expr: Nodo
+
+estructura SentenciaImportar:
+    tipo: texto
+    ruta: texto

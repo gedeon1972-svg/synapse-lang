@@ -1,0 +1,223 @@
+from enum import Enum, auto
+from dataclasses import dataclass, field
+from typing import List, Optional, Any
+
+
+class TokenID(Enum):
+    IF = auto()
+    ELSE = auto()
+    FUNCTION = auto()
+    RETURN = auto()
+    SPAWN = auto()
+    RECOVER = auto()
+    LISTEN = auto()
+    WHILE = auto()
+    IMPORT = auto()
+    STRUCT = auto()
+    BREAK = auto()
+    CONTINUE = auto()
+    DOT = auto()
+
+    IDENTIFIER = auto()
+    NUMBER = auto()
+    STRING = auto()
+
+    GREATER = auto()
+    LESS = auto()
+    EQUALS = auto()
+    NOT_EQUALS = auto()
+    LESS_EQUALS = auto()
+    GREATER_EQUALS = auto()
+    ASSIGN = auto()
+    PLUS = auto()
+    MINUS = auto()
+    STAR = auto()
+    SLASH = auto()
+    MODULO = auto()
+    ARROW = auto()
+
+    LPAREN = auto()
+    RPAREN = auto()
+    COLON = auto()
+    COMMA = auto()
+    NEWLINE = auto()
+    INDENT = auto()
+    DEDENT = auto()
+
+    EOF = auto()
+
+
+@dataclass
+class Token:
+    tipo: TokenID
+    linea: int
+    columna: int
+    valor: Any = None
+
+    def __repr__(self):
+        if self.valor is not None:
+            return f"Token({self.tipo.name}, {self.valor!r}) [L{self.linea}:{self.columna}]"
+        return f"Token({self.tipo.name}) [L{self.linea}:{self.columna}]"
+
+
+@dataclass
+class Nodo:
+    linea: int = 0
+    columna: int = 0
+
+
+@dataclass
+class Programa(Nodo):
+    sentencias: List[Nodo] = field(default_factory=list)
+
+
+@dataclass
+class Parametro:
+    nombre: str = ''
+    tipo: str = 'entero'
+    es_transferencia: bool = False
+
+
+@dataclass
+class DefinicionFuncion(Nodo):
+    nombre: str = ''
+    parametros: List[Parametro] = field(default_factory=list)
+    tipo_retorno: str = ''
+    cuerpo: List[Nodo] = field(default_factory=list)
+
+
+@dataclass
+class SentenciaSi(Nodo):
+    condicion: Optional[Nodo] = None
+    cuerpo: List[Nodo] = field(default_factory=list)
+    cuerpo_sino: Optional[List[Nodo]] = None
+
+
+@dataclass
+class SentenciaLanzar(Nodo):
+    llamada: Optional[Nodo] = None
+
+
+@dataclass
+class SentenciaRecuperar(Nodo):
+    accion_critica: Optional[Nodo] = None
+    plan_b: Optional[Nodo] = None
+
+
+@dataclass
+class SentenciaRetornar(Nodo):
+    expr: Optional[Nodo] = None
+    es_transferencia: bool = False
+
+
+@dataclass
+class SentenciaEscuchar(Nodo):
+    canal: Optional[Nodo] = None
+    respuesta: Optional[Nodo] = None
+
+
+@dataclass
+class SentenciaMientras(Nodo):
+    condicion: Optional[Nodo] = None
+    cuerpo: List[Nodo] = field(default_factory=list)
+
+
+@dataclass
+class SentenciaRomper(Nodo):
+    pass
+
+
+@dataclass
+class SentenciaSiguiente(Nodo):
+    pass
+
+
+@dataclass
+class OpBinaria(Nodo):
+    izquierdo: Optional[Nodo] = None
+    operador: str = ''
+    derecho: Optional[Nodo] = None
+
+
+@dataclass
+class OpUnaria(Nodo):
+    operador: str = ''
+    expr: Optional[Nodo] = None
+
+
+@dataclass
+class LlamadaFuncion(Nodo):
+    nombre: str = ''
+    argumentos: List[Nodo] = field(default_factory=list)
+
+
+@dataclass
+class Identificador(Nodo):
+    nombre: str = ''
+
+
+@dataclass
+class LiteralNumero(Nodo):
+    valor: int = 0
+
+
+@dataclass
+class LiteralCadena(Nodo):
+    valor: str = ''
+
+
+@dataclass
+class SentenciaExpr(Nodo):
+    expr: Optional[Nodo] = None
+
+
+@dataclass
+class AsignacionVariable(Nodo):
+    nombre: str = ''
+    expresion: Optional[Nodo] = None
+
+
+@dataclass
+class LogLlamada(Nodo):
+    argumentos: List[Nodo] = field(default_factory=list)
+
+
+@dataclass
+class SentenciaImportar(Nodo):
+    ruta: str = ''
+
+
+@dataclass
+class ExprTensor(Nodo):
+    filas: Optional[Nodo] = None
+    columnas: Optional[Nodo] = None
+
+
+@dataclass
+class ExprIndice(Nodo):
+    expr: Optional[Nodo] = None
+    indice: Optional[Nodo] = None
+
+
+@dataclass
+class ArgumentoTransferido(Nodo):
+    expr: Optional[Nodo] = None
+
+
+@dataclass
+class DefinicionEstructura(Nodo):
+    nombre: str = ''
+    campos: List[Parametro] = field(default_factory=list)
+
+
+@dataclass
+class ExprAccesoCampo(Nodo):
+    objeto: Optional[Nodo] = None
+    nombre_campo: str = ''
+
+
+@dataclass
+class AsignacionCampo(Nodo):
+    objeto: Optional[Nodo] = None
+    nombre_campo: str = ''
+    expresion: Optional[Nodo] = None

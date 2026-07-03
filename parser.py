@@ -1,0 +1,541 @@
+from typing import List, Optional, Set
+
+from ast_nodes import (
+    TokenID, Token, Nodo, Programa, Parametro,
+    DefinicionFuncion, DefinicionEstructura, ExprAccesoCampo, AsignacionCampo,
+    SentenciaSi, SentenciaLanzar, SentenciaRetornar,
+    SentenciaEscuchar, SentenciaMientras, SentenciaImportar,
+    AsignacionVariable, SentenciaRecuperar, LogLlamada, SentenciaExpr,
+    SentenciaRomper, SentenciaSiguiente,
+    OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
+    LiteralNumero, LiteralCadena, ExprTensor, ArgumentoTransferido,
+)
+from lexer import OPERADORES_BINARIOS
+from diagnostics import DiagnosticManager, ErrorCodes
+
+
+# Conjuntos de sincronizacion por nivel
+_SYNC_TOP = {TokenID.FUNCTION, TokenID.IMPORT, TokenID.EOF}
+_SYNC_STMT = {TokenID.NEWLINE, TokenID.DEDENT, TokenID.EOF} | _SYNC_TOP
+_SYNC_BLOCK = {TokenID.DEDENT, TokenID.EOF}
+_SYNC_EXPR = {TokenID.NEWLINE, TokenID.DEDENT, TokenID.EOF,
+              TokenID.COMMA, TokenID.RPAREN, TokenID.COLON}
+
+
+class Parser:
+    def __init__(self, tokens: List[Token], diag: DiagnosticManager):
+        self.tokens = tokens
+        self.pos = 0
+        self.diag = diag
+
+    def _mirar(self) -> Token:
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else Token(TokenID.EOF, 0, 0)
+
+    def _avanzar(self) -> Token:
+        t = self._mirar()
+        self.pos += 1
+        return t
+
+    def _sincronizar(self, sync_tokens: Set[TokenID]) -> None:
+        self._avanzar()
+        while self._mirar().tipo not in sync_tokens:
+            self._avanzar()
+
+    def _posible(self, *tipos: TokenID) -> Optional[Token]:
+        t = self._mirar()
+        if t.tipo in tipos:
+            return self._avanzar()
+        return None
+
+    def _esperar(self, *tipos: TokenID) -> Optional[Token]:
+        t = self._mirar()
+        if t.tipo not in tipos:
+            esperado = ' o '.join(tt.name for tt in tipos)
+            self.diag.reportar(ErrorCodes.ERR_SYNTAX_EXPECTED_TOKEN, t,
+                               esperado=esperado, encontrado=t.tipo.name)
+            self._sincronizar(_SYNC_EXPR)
+            return None
+        return self._avanzar()
+
+    def parsear(self) -> Programa:
+        prog = Programa(linea=1, columna=0)
+        while self._mirar().tipo != TokenID.EOF:
+            stmt = self._parsear_sentencia()
+            if stmt is not None:
+                prog.sentencias.append(stmt)
+            else:
+                self._avanzar()
+        return prog
+
+    def _parsear_sentencia(self) -> Optional[Nodo]:
+        t = self._mirar()
+        if t.tipo == TokenID.FUNCTION:
+            return self._parsear_def_funcion()
+        elif t.tipo == TokenID.STRUCT:
+            return self._parsear_def_estructura()
+        elif t.tipo == TokenID.IF:
+            return self._parsear_si()
+        elif t.tipo == TokenID.SPAWN:
+            return self._parsear_lanzar()
+        elif t.tipo == TokenID.RETURN:
+            return self._parsear_retornar()
+        elif t.tipo == TokenID.LISTEN:
+            return self._parsear_escuchar()
+        elif t.tipo == TokenID.WHILE:
+            return self._parsear_mientras()
+        elif t.tipo == TokenID.BREAK:
+            return self._parsear_romper()
+        elif t.tipo == TokenID.CONTINUE:
+            return self._parsear_siguiente()
+        elif t.tipo == TokenID.IMPORT:
+            return self._parsear_importar()
+        elif t.tipo == TokenID.INDENT:
+            return None
+        elif t.tipo == TokenID.NEWLINE:
+            return None
+        elif t.tipo == TokenID.DEDENT:
+            return None
+        elif t.tipo == TokenID.EOF:
+            return None
+        else:
+            if (t.tipo == TokenID.IDENTIFIER
+                    and self.pos + 1 < len(self.tokens)
+                    and self.tokens[self.pos + 1].tipo == TokenID.ASSIGN):
+                return self._parsear_asignacion()
+            if (t.tipo == TokenID.IDENTIFIER
+                    and self.pos + 3 < len(self.tokens)
+                    and self.tokens[self.pos + 1].tipo == TokenID.DOT
+                    and self.tokens[self.pos + 2].tipo == TokenID.IDENTIFIER
+                    and self.tokens[self.pos + 3].tipo == TokenID.ASSIGN):
+                return self._parsear_asignacion_campo()
+            return self._parsear_expr_o_recuperar()
+
+    def _parsear_def_funcion(self) -> Optional[DefinicionFuncion]:
+        if self._esperar(TokenID.FUNCTION) is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        tok_nombre = self._esperar(TokenID.IDENTIFIER)
+        if tok_nombre is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        if self._esperar(TokenID.LPAREN) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        params: List[Parametro] = []
+        if self._mirar().tipo != TokenID.RPAREN:
+            es_trans = self._posible(TokenID.ARROW) is not None
+            tok_nombre_param = self._esperar(TokenID.IDENTIFIER)
+            if tok_nombre_param is None:
+                self._sincronizar(_SYNC_STMT)
+                return None
+            self._esperar(TokenID.COLON)
+            tok_tipo = self._esperar(TokenID.IDENTIFIER)
+            tipo = tok_tipo.valor if tok_tipo else 'int'
+            params.append(Parametro(nombre=tok_nombre_param.valor, tipo=tipo, es_transferencia=es_trans))
+            while self._mirar().tipo == TokenID.COMMA:
+                self._avanzar()
+                es_trans = self._posible(TokenID.ARROW) is not None
+                tok_nombre_param = self._esperar(TokenID.IDENTIFIER)
+                if tok_nombre_param is None:
+                    break
+                self._esperar(TokenID.COLON)
+                tok_tipo = self._esperar(TokenID.IDENTIFIER)
+                tipo = tok_tipo.valor if tok_tipo else 'int'
+                params.append(Parametro(nombre=tok_nombre_param.valor, tipo=tipo, es_transferencia=es_trans))
+        if self._esperar(TokenID.RPAREN) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        if self._esperar(TokenID.ARROW) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        tok_retorno = self._esperar(TokenID.IDENTIFIER)
+        if tok_retorno is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        if self._esperar(TokenID.COLON) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        cuerpo = self._parsear_bloque() or []
+        return DefinicionFuncion(
+            nombre=tok_nombre.valor,
+            parametros=params,
+            tipo_retorno=tok_retorno.valor,
+            cuerpo=cuerpo,
+            linea=tok_nombre.linea,
+            columna=tok_nombre.columna,
+        )
+
+    def _parsear_si(self) -> Optional[SentenciaSi]:
+        tok_si = self._esperar(TokenID.IF)
+        if tok_si is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        condicion = self._parsear_expresion()
+        if self._esperar(TokenID.COLON) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        cuerpo = self._parsear_bloque() or []
+        cuerpo_sino = None
+        if self._mirar().tipo == TokenID.ELSE:
+            self._avanzar()
+            if self._esperar(TokenID.COLON) is None:
+                self._sincronizar(_SYNC_STMT)
+            else:
+                cuerpo_sino = self._parsear_bloque() or []
+        return SentenciaSi(
+            condicion=condicion,
+            cuerpo=cuerpo,
+            cuerpo_sino=cuerpo_sino,
+            linea=tok_si.linea,
+            columna=tok_si.columna,
+        )
+
+    def _parsear_lanzar(self) -> Optional[SentenciaLanzar]:
+        tok_spawn = self._esperar(TokenID.SPAWN)
+        if tok_spawn is None:
+            return None
+        llamada = self._parsear_llamada()
+        return SentenciaLanzar(
+            llamada=llamada,
+            linea=tok_spawn.linea,
+            columna=tok_spawn.columna,
+        )
+
+    def _parsear_retornar(self) -> SentenciaRetornar:
+        tok_ret = self._avanzar()
+        expr = None
+        es_transferencia = False
+        if self._mirar().tipo not in (TokenID.NEWLINE, TokenID.DEDENT, TokenID.EOF):
+            if self._mirar().tipo == TokenID.ARROW:
+                self._avanzar()
+                es_transferencia = True
+            expr = self._parsear_expresion()
+        return SentenciaRetornar(
+            expr=expr,
+            es_transferencia=es_transferencia,
+            linea=tok_ret.linea,
+            columna=tok_ret.columna,
+        )
+
+    def _parsear_escuchar(self) -> Optional[SentenciaEscuchar]:
+        tok_listen = self._esperar(TokenID.LISTEN)
+        if tok_listen is None:
+            return None
+        canal = self._parsear_expresion()
+        if self._esperar(TokenID.ARROW) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        respuesta = self._parsear_llamada()
+        return SentenciaEscuchar(
+            canal=canal,
+            respuesta=respuesta,
+            linea=tok_listen.linea,
+            columna=tok_listen.columna,
+        )
+
+    def _parsear_mientras(self) -> Optional[SentenciaMientras]:
+        tok_mientras = self._esperar(TokenID.WHILE)
+        if tok_mientras is None:
+            return None
+        condicion = self._parsear_expresion()
+        if self._esperar(TokenID.COLON) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        cuerpo = self._parsear_bloque() or []
+        return SentenciaMientras(
+            condicion=condicion,
+            cuerpo=cuerpo,
+            linea=tok_mientras.linea,
+            columna=tok_mientras.columna,
+        )
+
+    def _parsear_romper(self) -> Optional[SentenciaRomper]:
+        tok = self._avanzar()
+        return SentenciaRomper(linea=tok.linea, columna=tok.columna)
+
+    def _parsear_siguiente(self) -> Optional[SentenciaSiguiente]:
+        tok = self._avanzar()
+        return SentenciaSiguiente(linea=tok.linea, columna=tok.columna)
+
+    def _parsear_importar(self) -> Optional[SentenciaImportar]:
+        tok_import = self._esperar(TokenID.IMPORT)
+        if tok_import is None:
+            return None
+        primera_parte = self._esperar(TokenID.IDENTIFIER)
+        if primera_parte is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        ruta = primera_parte.valor
+        while self._mirar().tipo == TokenID.DOT:
+            self._avanzar()
+            parte = self._esperar(TokenID.IDENTIFIER)
+            if parte is None:
+                break
+            ruta += '.' + parte.valor
+        return SentenciaImportar(
+            ruta=ruta,
+            linea=tok_import.linea,
+            columna=tok_import.columna,
+        )
+
+    def _parsear_asignacion(self) -> AsignacionVariable:
+        tok_id = self._avanzar()
+        self._esperar(TokenID.ASSIGN)
+        expr = self._parsear_expresion()
+        return AsignacionVariable(
+            nombre=tok_id.valor,
+            expresion=expr,
+            linea=tok_id.linea,
+            columna=tok_id.columna,
+        )
+
+    def _parsear_expr_o_recuperar(self) -> Nodo:
+        expr = self._parsear_expresion()
+
+        if isinstance(expr, LlamadaFuncion) and expr.nombre == 'log':
+            return LogLlamada(
+                argumentos=expr.argumentos,
+                linea=expr.linea,
+                columna=expr.columna,
+            )
+
+        if self._mirar().tipo == TokenID.RECOVER:
+            self._avanzar()
+            if self._esperar(TokenID.COLON) is None:
+                self._sincronizar(_SYNC_EXPR)
+                return SentenciaExpr(expr=expr, linea=expr.linea, columna=expr.columna)
+            plan_b = self._parsear_expresion()
+            return SentenciaRecuperar(
+                accion_critica=expr,
+                plan_b=plan_b,
+                linea=expr.linea,
+                columna=expr.columna,
+            )
+        elif self._mirar().tipo in (TokenID.NEWLINE, TokenID.DEDENT, TokenID.EOF):
+            return SentenciaExpr(expr=expr, linea=expr.linea, columna=expr.columna)
+        else:
+            t = self._mirar()
+            self.diag.reportar(ErrorCodes.ERR_SYNTAX_UNEXPECTED_TOKEN, t,
+                               tok_name=t.tipo.name)
+            self._sincronizar(_SYNC_EXPR)
+            return SentenciaExpr(expr=expr, linea=expr.linea, columna=expr.columna)
+
+    def _parsear_expresion(self) -> Nodo:
+        return self._parsear_comparacion()
+
+    def _parsear_comparacion(self) -> Nodo:
+        izquierdo = self._parsear_adicion()
+        ops = {TokenID.GREATER, TokenID.LESS, TokenID.EQUALS,
+               TokenID.NOT_EQUALS, TokenID.LESS_EQUALS, TokenID.GREATER_EQUALS}
+        while self._mirar().tipo in ops:
+            tok_op = self._avanzar()
+            derecho = self._parsear_adicion()
+            izquierdo = OpBinaria(
+                izquierdo=izquierdo,
+                operador=OPERADORES_BINARIOS[tok_op.tipo],
+                derecho=derecho,
+                linea=izquierdo.linea,
+                columna=izquierdo.columna,
+            )
+        return izquierdo
+
+    def _parsear_adicion(self) -> Nodo:
+        izquierdo = self._parsear_multiplicacion()
+        ops = {TokenID.PLUS, TokenID.MINUS}
+        while self._mirar().tipo in ops:
+            tok_op = self._avanzar()
+            derecho = self._parsear_multiplicacion()
+            izquierdo = OpBinaria(
+                izquierdo=izquierdo,
+                operador=OPERADORES_BINARIOS[tok_op.tipo],
+                derecho=derecho,
+                linea=izquierdo.linea,
+                columna=izquierdo.columna,
+            )
+        return izquierdo
+
+    def _parsear_multiplicacion(self) -> Nodo:
+        izquierdo = self._parsear_unario()
+        ops = {TokenID.STAR, TokenID.SLASH, TokenID.MODULO}
+        while self._mirar().tipo in ops:
+            tok_op = self._avanzar()
+            derecho = self._parsear_unario()
+            izquierdo = OpBinaria(
+                izquierdo=izquierdo,
+                operador=OPERADORES_BINARIOS[tok_op.tipo],
+                derecho=derecho,
+                linea=izquierdo.linea,
+                columna=izquierdo.columna,
+            )
+        return izquierdo
+
+    def _parsear_unario(self) -> Nodo:
+        t = self._mirar()
+        if t.tipo == TokenID.MINUS:
+            self._avanzar()
+            expr = self._parsear_unario()
+            return OpUnaria(
+                operador='-',
+                expr=expr,
+                linea=t.linea,
+                columna=t.columna,
+            )
+        return self._parsear_primario()
+
+    def _parsear_primario(self) -> Nodo:
+        t = self._mirar()
+        if t.tipo == TokenID.NUMBER:
+            self._avanzar()
+            return LiteralNumero(valor=t.valor, linea=t.linea, columna=t.columna)
+        if t.tipo == TokenID.STRING:
+            self._avanzar()
+            return LiteralCadena(valor=t.valor, linea=t.linea, columna=t.columna)
+        if t.tipo == TokenID.IDENTIFIER:
+            self._avanzar()
+            if self._mirar().tipo == TokenID.LPAREN:
+                if t.valor == 'tensor':
+                    return self._parsear_tensor(t)
+                return self._parsear_llamada(Identificador(nombre=t.valor, linea=t.linea, columna=t.columna))
+            expr: Nodo = Identificador(nombre=t.valor, linea=t.linea, columna=t.columna)
+            while self._mirar().tipo == TokenID.DOT:
+                self._avanzar()
+                tok_campo = self._esperar(TokenID.IDENTIFIER)
+                if tok_campo is None:
+                    break
+                expr = ExprAccesoCampo(
+                    objeto=expr,
+                    nombre_campo=tok_campo.valor,
+                    linea=expr.linea,
+                    columna=expr.columna,
+                )
+            return expr
+        if t.tipo == TokenID.LPAREN:
+            self._avanzar()
+            expr = self._parsear_expresion()
+            self._esperar(TokenID.RPAREN)
+            return expr
+        self.diag.reportar(ErrorCodes.ERR_SYNTAX_UNEXPECTED_EXPR, t, tipo=t.tipo.name)
+        self._sincronizar(_SYNC_EXPR)
+        return LiteralNumero(valor=0, linea=t.linea, columna=t.columna)
+
+    def _parsear_tensor(self, tok_id: Token) -> ExprTensor:
+        self._esperar(TokenID.LPAREN)
+        filas = self._parsear_expresion()
+        self._esperar(TokenID.COMMA)
+        columnas = self._parsear_expresion()
+        self._esperar(TokenID.RPAREN)
+        return ExprTensor(
+            filas=filas,
+            columnas=columnas,
+            linea=tok_id.linea,
+            columna=tok_id.columna,
+        )
+
+    def _parsear_llamada(self, id_nodo: Optional[Nodo] = None) -> LlamadaFuncion:
+        if id_nodo is None:
+            id_nodo = self._esperar(TokenID.IDENTIFIER)
+            if id_nodo is None:
+                return LlamadaFuncion(nombre='?error?', linea=0, columna=0)
+            tok_id = id_nodo
+        else:
+            tok_id = id_nodo
+        self._esperar(TokenID.LPAREN)
+        args: List[Nodo] = []
+        if self._mirar().tipo != TokenID.RPAREN:
+            if self._mirar().tipo == TokenID.ARROW:
+                self._avanzar()
+                args.append(ArgumentoTransferido(expr=self._parsear_expresion()))
+            else:
+                args.append(self._parsear_expresion())
+            while self._mirar().tipo == TokenID.COMMA:
+                self._avanzar()
+                if self._mirar().tipo == TokenID.ARROW:
+                    self._avanzar()
+                    args.append(ArgumentoTransferido(expr=self._parsear_expresion()))
+                else:
+                    args.append(self._parsear_expresion())
+        self._esperar(TokenID.RPAREN)
+        nombre = tok_id.nombre if isinstance(tok_id, Nodo) and hasattr(tok_id, 'nombre') else getattr(tok_id, 'valor', '?')
+        return LlamadaFuncion(
+            nombre=nombre,
+            argumentos=args,
+            linea=tok_id.linea if isinstance(tok_id, Token) else 0,
+            columna=tok_id.columna if isinstance(tok_id, Token) else 0,
+        )
+
+    def _parsear_def_estructura(self) -> Optional[DefinicionEstructura]:
+        if self._esperar(TokenID.STRUCT) is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        tok_nombre = self._esperar(TokenID.IDENTIFIER)
+        if tok_nombre is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        if self._esperar(TokenID.COLON) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        if self._esperar(TokenID.NEWLINE) is None:
+            self._sincronizar(_SYNC_BLOCK)
+            return None
+        if self._esperar(TokenID.INDENT) is None:
+            self._sincronizar(_SYNC_BLOCK)
+            return None
+        campos: List[Parametro] = []
+        while self._mirar().tipo not in (TokenID.DEDENT, TokenID.EOF):
+            if self._mirar().tipo == TokenID.NEWLINE:
+                self._avanzar()
+                continue
+            tok_campo = self._esperar(TokenID.IDENTIFIER)
+            if tok_campo is None:
+                self._sincronizar(_SYNC_BLOCK)
+                break
+            if self._esperar(TokenID.COLON) is None:
+                self._sincronizar(_SYNC_BLOCK)
+                break
+            tok_tipo = self._esperar(TokenID.IDENTIFIER)
+            if tok_tipo is None:
+                self._sincronizar(_SYNC_BLOCK)
+                break
+            campos.append(Parametro(nombre=tok_campo.valor, tipo=tok_tipo.valor))
+            if self._mirar().tipo == TokenID.NEWLINE:
+                self._avanzar()
+        if self._mirar().tipo != TokenID.EOF:
+            self._esperar(TokenID.DEDENT)
+        return DefinicionEstructura(
+            nombre=tok_nombre.valor,
+            campos=campos,
+            linea=tok_nombre.linea,
+            columna=tok_nombre.columna,
+        )
+
+    def _parsear_asignacion_campo(self) -> AsignacionCampo:
+        tok_obj = self._avanzar()
+        self._avanzar()  # DOT
+        tok_campo = self._avanzar()
+        self._esperar(TokenID.ASSIGN)
+        expr = self._parsear_expresion()
+        return AsignacionCampo(
+            objeto=Identificador(nombre=tok_obj.valor, linea=tok_obj.linea, columna=tok_obj.columna),
+            nombre_campo=tok_campo.valor,
+            expresion=expr,
+            linea=tok_obj.linea,
+            columna=tok_obj.columna,
+        )
+
+    def _parsear_bloque(self) -> Optional[List[Nodo]]:
+        if self._esperar(TokenID.NEWLINE) is None:
+            self._sincronizar(_SYNC_BLOCK)
+            return None
+        if self._esperar(TokenID.INDENT) is None:
+            self._sincronizar(_SYNC_BLOCK)
+            return None
+        stmts: List[Nodo] = []
+        while self._mirar().tipo not in (TokenID.DEDENT, TokenID.EOF):
+            s = self._parsear_sentencia()
+            if s is not None:
+                stmts.append(s)
+            else:
+                self._avanzar()
+        if self._mirar().tipo != TokenID.EOF:
+            self._esperar(TokenID.DEDENT)
+        return stmts

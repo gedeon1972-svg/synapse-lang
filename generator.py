@@ -1,0 +1,1718 @@
+from typing import List, Optional, Set
+from ast_nodes import (
+    Nodo, Programa, Parametro,
+    DefinicionFuncion, DefinicionEstructura, ExprAccesoCampo, AsignacionCampo,
+    SentenciaSi, SentenciaLanzar, SentenciaRecuperar,
+    SentenciaRetornar, SentenciaEscuchar, SentenciaMientras,
+    SentenciaRomper, SentenciaSiguiente,
+    SentenciaExpr, AsignacionVariable, LogLlamada,
+    OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
+    LiteralNumero, LiteralCadena, ExprTensor, ArgumentoTransferido,
+)
+
+
+MAPA_TIPOS_C: dict[str, str] = {
+    'entero': 'int',
+    'int': 'int',
+    'vacio': 'void',
+    'nulo': 'void',
+    'decimal': 'float',
+    'real': 'float',
+    'Tensor': 'Tensor',
+    'tensor': 'Tensor',
+    'Canal': 'Canal',
+    'canal': 'Canal',
+    'texto': 'CadenaSegura',
+    'cadena': 'CadenaSegura',
+    'booleano': 'int',
+    'logico': 'int',
+}
+
+
+_BUILTINS: dict[str, str] = {
+    'reserva': 'Tensor',
+    'libera': 'void',
+    'crear_tensor': 'Tensor',
+    'suma_tensor': 'Tensor',
+    'producto_punto': 'Tensor',
+    'abrir': 'Canal',
+    'leer': 'CadenaSegura',
+    'escribir': 'void',
+    'escribir_linea': 'void',
+    'leer_linea': 'CadenaSegura',
+    'cerrar': 'void',
+    'suma': 'Tensor',
+    'producto': 'Tensor',
+    'relu': 'Tensor',
+    'tokenizar': 'int',
+    'parsear': 'struct Programa',
+    'generar': 'int',
+    'concat': 'CadenaSegura',
+    '_argc': 'int',
+    '_argv': 'CadenaSegura',
+    'salir': 'void',
+}
+
+
+def _traducir_tipo_c(tipo_synapse: str) -> str:
+    tipo_c = MAPA_TIPOS_C.get(tipo_synapse)
+    if tipo_c is not None:
+        return tipo_c
+    return f"struct {tipo_synapse}"
+
+
+class GeneradorC:
+    def __init__(self, programa: Programa):
+        self.programa = programa
+        self.lineas: List[str] = []
+        self.indent = 0
+        self._contador_thread = 0
+        self._contador_listener = 0
+        self._variables: dict[str, str] = {}
+        self._funciones_emitidas: set[str] = set()
+        self._tensor_vars: set[str] = set()
+        self._tensor_vars_transferidas: set[str] = set()
+        self._canal_vars: set[str] = set()
+        self._canal_vars_cerradas: set[str] = set()
+        self._strings_heap: set[str] = set()
+        self._listener_funciones: List[str] = []
+        self._gen_tok_emitido = False
+        self._gen_parse_emitido = False
+        self._gen_defs_emitido = False
+        self._estructuras: dict[str, list] = {}
+
+    def _push(self, linea: str = ""):
+        if linea == "":
+            self.lineas.append("")
+        else:
+            self.lineas.append("    " * self.indent + linea)
+
+    def _push_expr(self, expr: str):
+        self._push(expr)
+
+    def _encontrar_principal(self) -> Optional[str]:
+        for s in self.programa.sentencias:
+            if isinstance(s, DefinicionFuncion) and s.nombre == 'principal':
+                return s.nombre
+        return None
+
+    def generar(self) -> str:
+        self._variables = {}
+        self._emitir_encabezado()
+        # Builtins de sistema siempre presentes
+        self._push("static int _g_argc;")
+        self._push("static char** _g_argv;")
+        self._push("int _argc() { return _g_argc; }")
+        self._push("")
+        self._push("CadenaSegura _argv(int i) {")
+        self.indent += 1
+        self._push("if (i < 0 || i >= _g_argc) return (CadenaSegura){0, \"\"};")
+        self._push("return (CadenaSegura){ .longitud = (int)strlen(_g_argv[i]), .datos = _g_argv[i] };")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+        self._push("void salir(int codigo) { exit(codigo); }")
+        self._push("")
+        self._push("CadenaSegura concat(CadenaSegura a, CadenaSegura b) {")
+        self.indent += 1
+        self._push("int _tl = a.longitud + b.longitud;")
+        self._push("char* _buf = (char*)malloc(_tl + 1);")
+        self._push('if (!_buf) { fprintf(stderr,"ESCAPA_DEL_ALCANCE: malloc fallo en concat\\n"); exit(1); }')
+        self._push("memcpy(_buf, a.datos, a.longitud);")
+        self._push("memcpy(_buf + a.longitud, b.datos, b.longitud);")
+        self._push("_buf[_tl] = 0;")
+        self._push("CadenaSegura _r = { .longitud = _tl, .datos = _buf };")
+        self._push("return _r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+        # Forward declarations for structs
+        for s in self.programa.sentencias:
+            if isinstance(s, DefinicionEstructura):
+                self._push(f"struct {s.nombre};")
+        if any(isinstance(s, DefinicionEstructura) for s in self.programa.sentencias):
+            self._push("")
+        for s in self.programa.sentencias:
+            self._visitar(s)
+        for func in self._listener_funciones:
+            self._push(func)
+            self._push("")
+        principal = self._encontrar_principal()
+        self._push("int main(int argc, char** argv) {")
+        self.indent += 1
+        self._push("_g_argc = argc;")
+        self._push("_g_argv = argv;")
+        self._push("pool_init(POOL_BLOQUES, TAMANO_BLOQUE);")
+        if principal:
+            self._push(f"{principal}();")
+        self._push("return 0;")
+        self.indent -= 1
+        self._push("}")
+        return "\n".join(self.lineas)
+
+    def _emitir_encabezado(self):
+        self._push("// salida_metal.c - Generado por Synapse Compilador")
+        self._push("// Lenguaje: Synapse v1.0 (#lang: es)")
+        self._push("#include <stdio.h>")
+        self._push("#include <stdlib.h>")
+        self._push("#include <stdint.h>")
+        self._push("#include <pthread.h>")
+        self._push("#include <string.h>")
+        self._push("")
+        self._push("typedef struct { int longitud; const char* datos; } CadenaSegura;")
+        self._push("")
+        self._push("typedef struct { uint32_t filas; uint32_t columnas; float* datos; } Tensor;")
+        self._push("")
+        self._push("typedef struct { FILE* stream; int es_valido; } Canal;")
+        self._push("")
+        self._push("// Pool de memoria de bloques fijos")
+        self._push("#define POOL_BLOQUES 64")
+        self._push("#define TAMANO_BLOQUE 4096")
+        self._push("typedef struct {")
+        self._push("    uint8_t* pool_base;")
+        self._push("    uint32_t* bitmap;")
+        self._push("    uint32_t total_blocks;")
+        self._push("    uint32_t block_size;")
+        self._push("} MemoryPool;")
+        self._push("static MemoryPool _g_pool;")
+        self._push("")
+        self._push("void pool_init(uint32_t total_blocks, uint32_t block_size) {")
+        self.indent += 1
+        self._push("_g_pool.total_blocks = total_blocks;")
+        self._push("_g_pool.block_size = block_size;")
+        self._push("_g_pool.pool_base = (uint8_t*)malloc(total_blocks * block_size);")
+        self._push("uint32_t _words = (total_blocks + 31) / 32;")
+        self._push("_g_pool.bitmap = (uint32_t*)calloc(_words, sizeof(uint32_t));")
+        self._push("if (!_g_pool.pool_base || !_g_pool.bitmap) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: pool_init fallo\\n");')
+        self._push("exit(1);")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+        self._push("void* pool_alloc() {")
+        self.indent += 1
+        self._push("uint32_t _words = (_g_pool.total_blocks + 31) / 32;")
+        self._push("for (uint32_t _w = 0; _w < _words; _w++) {")
+        self.indent += 1
+        self._push("if (_g_pool.bitmap[_w] != 0xFFFFFFFF) {")
+        self.indent += 1
+        self._push("uint32_t _bits = ~_g_pool.bitmap[_w];")
+        self._push("uint32_t _b = 0;")
+        self._push("while (!(_bits & (1u << _b))) { _b++; }")
+        self._push("uint32_t _index = _w * 32 + _b;")
+        self._push("if (_index >= _g_pool.total_blocks) break;")
+        self._push("_g_pool.bitmap[_w] |= (1u << _b);")
+        self._push("return _g_pool.pool_base + _index * _g_pool.block_size;")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("return NULL;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+        self._push("void pool_free(void* ptr) {")
+        self.indent += 1
+        self._push("if (ptr >= (void*)_g_pool.pool_base")
+        self._push("    && ptr < (void*)(_g_pool.pool_base + _g_pool.total_blocks * _g_pool.block_size)) {")
+        self.indent += 1
+        self._push("uint32_t _index = (uint32_t)((uint8_t*)ptr - _g_pool.pool_base) / _g_pool.block_size;")
+        self._push("uint32_t _w = _index / 32;")
+        self._push("uint32_t _b = _index % 32;")
+        self._push("_g_pool.bitmap[_w] &= ~(1u << _b);")
+        self.indent -= 1
+        self._push("} else {")
+        self.indent += 1
+        self._push("free(ptr);")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+        self._push("static inline float* _pool_malloc(size_t tamano) {")
+        self.indent += 1
+        self._push("if (tamano <= TAMANO_BLOQUE) {")
+        self.indent += 1
+        self._push("float* _p = (float*)pool_alloc();")
+        self._push("if (_p) return _p;")
+        self._push('fprintf(stderr, "ADVERTENCIA: pool agotado, usando malloc\\n");')
+        self.indent -= 1
+        self._push("}")
+        self._push("float* _p = (float*)malloc(tamano);")
+        self._push("if (!_p) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: malloc fallo\\n");')
+        self._push("exit(1);")
+        self.indent -= 1
+        self._push("}")
+        self._push("return _p;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _visitar(self, nodo: Nodo):
+        if isinstance(nodo, DefinicionFuncion):
+            self._visitar_funcion(nodo)
+        elif isinstance(nodo, SentenciaSi):
+            self._visitar_si(nodo)
+        elif isinstance(nodo, SentenciaLanzar):
+            self._visitar_lanzar(nodo)
+        elif isinstance(nodo, SentenciaRecuperar):
+            self._visitar_recuperar(nodo)
+        elif isinstance(nodo, SentenciaRetornar):
+            self._visitar_retornar(nodo)
+        elif isinstance(nodo, SentenciaEscuchar):
+            self._visitar_escuchar(nodo)
+        elif isinstance(nodo, SentenciaRomper):
+            self._push("break;")
+        elif isinstance(nodo, SentenciaSiguiente):
+            self._push("continue;")
+        elif isinstance(nodo, SentenciaMientras):
+            self._visitar_mientras(nodo)
+        elif isinstance(nodo, SentenciaExpr):
+            self._push(self._expr_a_c(nodo.expr) + ";")
+        elif isinstance(nodo, AsignacionVariable):
+            self._visitar_asignacion(nodo)
+        elif isinstance(nodo, LogLlamada):
+            self._visitar_log(nodo)
+        elif isinstance(nodo, DefinicionEstructura):
+            self._visitar_estructura(nodo)
+        elif isinstance(nodo, AsignacionCampo):
+            obj = self._expr_a_c(nodo.objeto)
+            val = self._expr_a_c(nodo.expresion)
+            obj_tipo = self._tipo_de_expr(nodo.objeto)
+            es_puntero = False
+            if obj_tipo.startswith('struct '):
+                nombre_struct = obj_tipo[7:]
+                info = self._estructuras.get(nombre_struct)
+                if info and nodo.nombre_campo in info.get('campos_pointer', set()):
+                    es_puntero = True
+            sep = '->' if es_puntero else '.'
+            self._push(f"{obj}{sep}{nodo.nombre_campo} = {val};")
+
+    def _visitar_funcion(self, nodo: DefinicionFuncion):
+        if nodo.nombre in self._funciones_emitidas:
+            return
+        self._funciones_emitidas.add(nodo.nombre)
+
+        if nodo.nombre in ('reserva', 'libera', 'abrir', 'leer', 'escribir', 'escribir_linea', 'leer_linea', 'cerrar',
+                           'suma', 'producto', 'relu', 'crear_tensor', 'suma_tensor', 'producto_punto',
+                           'tokenizar', 'parsear', 'generar'):
+            getattr(self, f'_emitir_{nodo.nombre}')(nodo)
+            return
+
+        self._variables = {}
+        self._tensor_vars = set()
+        self._tensor_vars_transferidas = set()
+        self._canal_vars = set()
+        self._canal_vars_cerradas = set()
+        self._strings_heap = set()
+        for p in nodo.parametros:
+            tipo_c = _traducir_tipo_c(p.tipo)
+            self._variables[p.nombre] = tipo_c
+        tipo = _traducir_tipo_c(nodo.tipo_retorno)
+        params = ", ".join(f"{_traducir_tipo_c(p.tipo)} {p.nombre}" for p in nodo.parametros) if nodo.parametros else "void"
+        self._push(f"{tipo} {nodo.nombre}({params}) {{")
+        self.indent += 1
+        for s in nodo.cuerpo:
+            self._visitar(s)
+        for var in self._tensor_vars:
+            if var not in self._tensor_vars_transferidas:
+                self._push(f"pool_free({var}.datos);")
+        for var in self._canal_vars:
+            if var not in self._canal_vars_cerradas:
+                self._push(f"/* ADVERTENCIA: canal '{var}' no fue cerrado explicitamente */")
+                self._push(f"if ({var}.stream) {{ fclose({var}.stream); {var}.es_valido = 0; }}")
+        for var in self._strings_heap:
+            self._push(f"free((void*){var}.datos);")
+        self._tensor_vars.clear()
+        self._tensor_vars_transferidas.clear()
+        self._canal_vars.clear()
+        self._canal_vars_cerradas.clear()
+        self._strings_heap.clear()
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_reserva(self, nodo: DefinicionFuncion):
+        tam = nodo.parametros[0].nombre if nodo.parametros else 'tamano'
+        self._push("Tensor reserva(int tamano) {")
+        self.indent += 1
+        self._push("Tensor _bloque;")
+        self._push("_bloque.filas = tamano;")
+        self._push("_bloque.columnas = 1;")
+        self._push("_bloque.datos = _pool_malloc(tamano);")
+        self._push("return _bloque;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_libera(self, nodo: DefinicionFuncion):
+        bloque = nodo.parametros[0].nombre if nodo.parametros else 'bloque'
+        self._push("void libera(Tensor bloque) {")
+        self.indent += 1
+        self._push("if (bloque.datos) {")
+        self.indent += 1
+        self._push("pool_free(bloque.datos);")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_abrir(self, nodo: DefinicionFuncion):
+        self._push("Canal abrir(CadenaSegura ruta, CadenaSegura modo) {")
+        self.indent += 1
+        self._push("Canal _c;")
+        self._push("_c.stream = fopen(ruta.datos, modo.datos);")
+        self._push("_c.es_valido = (_c.stream != NULL) ? 1 : 0;")
+        self._push("if (!_c.es_valido) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: fopen fallo en abrir()\\n");')
+        self.indent -= 1
+        self._push("}")
+        self._push("return _c;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_leer(self, nodo: DefinicionFuncion):
+        self._push("CadenaSegura leer(Canal canal) {")
+        self.indent += 1
+        self._push('if (!canal.es_valido) { return (CadenaSegura){ .longitud = 0, .datos = "" }; }')
+        self._push("fseek(canal.stream, 0, SEEK_END);")
+        self._push("long _tam = ftell(canal.stream);")
+        self._push("rewind(canal.stream);")
+        self._push("char* _buf = (char*)malloc(_tam + 1);")
+        self._push('if (!_buf) { return (CadenaSegura){ .longitud = 0, .datos = "" }; }')
+        self._push("size_t _leido = fread(_buf, 1, _tam, canal.stream);")
+        self._push("_buf[_leido] = '\\0';")
+        self._push("return (CadenaSegura){ .longitud = (int)_leido, .datos = (const char*)_buf };")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_escribir(self, nodo: DefinicionFuncion):
+        self._push("void escribir(CadenaSegura contenido) {")
+        self.indent += 1
+        self._push("fwrite(contenido.datos, 1, contenido.longitud, stdout);")
+        self._push("fflush(stdout);")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_escribir_linea(self, nodo: DefinicionFuncion):
+        self._push("void escribir_linea(CadenaSegura contenido) {")
+        self.indent += 1
+        self._push("fwrite(contenido.datos, 1, contenido.longitud, stdout);")
+        self._push("fwrite(\"\\n\", 1, 1, stdout);")
+        self._push("fflush(stdout);")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_leer_linea(self, nodo: DefinicionFuncion):
+        self._push("CadenaSegura leer_linea() {")
+        self.indent += 1
+        self._push("static char _buf[4096];")
+        self._push("if (fgets(_buf, 4096, stdin)) {")
+        self.indent += 1
+        self._push("int _len = (int)strlen(_buf);")
+        self._push("if (_len > 0 && _buf[_len - 1] == '\\n') { _buf[_len - 1] = '\\0'; _len--; }")
+        self._push("char* _dup = (char*)malloc(_len + 1);")
+        self._push("if (!_dup) { return (CadenaSegura){ .longitud = 0, .datos = \"\" }; }")
+        self._push("memcpy(_dup, _buf, _len + 1);")
+        self._push("return (CadenaSegura){ .longitud = _len, .datos = _dup };")
+        self.indent -= 1
+        self._push("}")
+        self._push("return (CadenaSegura){ .longitud = 0, .datos = \"\" };")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_cerrar(self, nodo: DefinicionFuncion):
+        self._push("void cerrar(Canal canal) {")
+        self.indent += 1
+        self._push("if (canal.stream) {")
+        self.indent += 1
+        self._push("fclose(canal.stream);")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_suma(self, nodo: DefinicionFuncion):
+        self._push("Tensor suma(Tensor a, Tensor b) {")
+        self.indent += 1
+        self._push("if (a.filas != b.filas || a.columnas != b.columnas) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: dimensiones incompatibles en suma()\\n");')
+        self._push('return (Tensor){ .filas = 0, .columnas = 0, .datos = NULL };')
+        self.indent -= 1
+        self._push("}")
+        self._push("Tensor r;")
+        self._push("r.filas = a.filas;")
+        self._push("r.columnas = a.columnas;")
+        self._push("r.datos = _pool_malloc(r.filas * r.columnas * sizeof(float));")
+        self._push("for (int _i = 0; _i < r.filas * r.columnas; _i++) {")
+        self.indent += 1
+        self._push("r.datos[_i] = a.datos[_i] + b.datos[_i];")
+        self.indent -= 1
+        self._push("}")
+        self._push("pool_free(a.datos);")
+        self._push("pool_free(b.datos);")
+        self._push("return r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_producto(self, nodo: DefinicionFuncion):
+        self._push("Tensor producto(Tensor a, Tensor b) {")
+        self.indent += 1
+        self._push("if (a.columnas != b.filas) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: dimensiones incompatibles en producto()\\n");')
+        self._push('return (Tensor){ .filas = 0, .columnas = 0, .datos = NULL };')
+        self.indent -= 1
+        self._push("}")
+        self._push("Tensor r;")
+        self._push("r.filas = a.filas;")
+        self._push("r.columnas = b.columnas;")
+        self._push("r.datos = (float*)calloc(r.filas * r.columnas, sizeof(float));")
+        self._push("for (int _i = 0; _i < r.filas; _i++) {")
+        self.indent += 1
+        self._push("for (int _j = 0; _j < r.columnas; _j++) {")
+        self.indent += 1
+        self._push("float _sum = 0;")
+        self._push("for (int _k = 0; _k < a.columnas; _k++) {")
+        self.indent += 1
+        self._push("_sum += a.datos[_i * a.columnas + _k] * b.datos[_k * b.columnas + _j];")
+        self.indent -= 1
+        self._push("}")
+        self._push("r.datos[_i * r.columnas + _j] = _sum;")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("pool_free(a.datos);")
+        self._push("pool_free(b.datos);")
+        self._push("return r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_relu(self, nodo: DefinicionFuncion):
+        self._push("Tensor relu(Tensor a) {")
+        self.indent += 1
+        self._push("Tensor r;")
+        self._push("r.filas = a.filas;")
+        self._push("r.columnas = a.columnas;")
+        self._push("r.datos = _pool_malloc(a.filas * a.columnas * sizeof(float));")
+        self._push("for (int _i = 0; _i < a.filas * a.columnas; _i++) {")
+        self.indent += 1
+        self._push("r.datos[_i] = (a.datos[_i] > 0) ? a.datos[_i] : 0.0f;")
+        self.indent -= 1
+        self._push("}")
+        self._push("pool_free(a.datos);")
+        self._push("return r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_crear_tensor(self, nodo: DefinicionFuncion):
+        self._push("Tensor crear_tensor(int filas, int columnas) {")
+        self.indent += 1
+        self._push("Tensor r;")
+        self._push("r.filas = filas;")
+        self._push("r.columnas = columnas;")
+        self._push("r.datos = _pool_malloc(filas * columnas * sizeof(float));")
+        self._push("memset(r.datos, 0, filas * columnas * sizeof(float));")
+        self._push("return r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_suma_tensor(self, nodo: DefinicionFuncion):
+        self._push("Tensor suma_tensor(Tensor a, Tensor b) {")
+        self.indent += 1
+        self._push("if (a.filas != b.filas || a.columnas != b.columnas) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: dimensiones incompatibles en suma_tensor()\\n");')
+        self._push('return (Tensor){ .filas = 0, .columnas = 0, .datos = NULL };')
+        self.indent -= 1
+        self._push("}")
+        self._push("Tensor r;")
+        self._push("r.filas = a.filas;")
+        self._push("r.columnas = a.columnas;")
+        self._push("r.datos = _pool_malloc(r.filas * r.columnas * sizeof(float));")
+        self._push("for (int _i = 0; _i < r.filas * r.columnas; _i++) {")
+        self.indent += 1
+        self._push("r.datos[_i] = a.datos[_i] + b.datos[_i];")
+        self.indent -= 1
+        self._push("}")
+        self._push("pool_free(a.datos);")
+        self._push("pool_free(b.datos);")
+        self._push("return r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_producto_punto(self, nodo: DefinicionFuncion):
+        self._push("Tensor producto_punto(Tensor a, Tensor b) {")
+        self.indent += 1
+        self._push("if (a.columnas != b.filas) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "ESCAPA_DEL_ALCANCE: dimensiones incompatibles en producto_punto()\\n");')
+        self._push('return (Tensor){ .filas = 0, .columnas = 0, .datos = NULL };')
+        self.indent -= 1
+        self._push("}")
+        self._push("Tensor r;")
+        self._push("r.filas = a.filas;")
+        self._push("r.columnas = b.columnas;")
+        self._push("r.datos = (float*)calloc(r.filas * r.columnas, sizeof(float));")
+        self._push("for (int _i = 0; _i < r.filas; _i++) {")
+        self.indent += 1
+        self._push("for (int _j = 0; _j < r.columnas; _j++) {")
+        self.indent += 1
+        self._push("float _sum = 0;")
+        self._push("for (int _k = 0; _k < a.columnas; _k++) {")
+        self.indent += 1
+        self._push("_sum += a.datos[_i * a.columnas + _k] * b.datos[_k * b.columnas + _j];")
+        self.indent -= 1
+        self._push("}")
+        self._push("r.datos[_i * r.columnas + _j] = _sum;")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push("pool_free(a.datos);")
+        self._push("pool_free(b.datos);")
+        self._push("return r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_tokenizar(self, nodo: DefinicionFuncion):
+        self._push("int tokenizar(CadenaSegura fuente) {")
+        self.indent += 1
+        self._push("int _i = 0;")
+        self._push("int _linea = 1;")
+        self._push("int _columna = 1;")
+        self._push("int _token_count = 0;")
+        self._push("while (_i < fuente.longitud) {")
+        self.indent += 1
+        self._push("char _c = fuente.datos[_i];")
+        self._push("if (_c == ' ' || _c == '\\t') { _i++; _columna++; continue; }")
+        self._push("if (_c == '\\n') { _i++; _linea++; _columna = 1; continue; }")
+        self._push("if (_c == '/' && _i + 1 < fuente.longitud && fuente.datos[_i + 1] == '/') {")
+        self.indent += 1
+        self._push("while (_i < fuente.longitud && fuente.datos[_i] != '\\n') { _i++; }")
+        self._push("continue;")
+        self.indent -= 1
+        self._push("}")
+        self._push("if (_c == '\"' || _c == '\\'') {")
+        self.indent += 1
+        self._push("char _q = _c; int _start = _i; _i++; _columna++;")
+        self._push("while (_i < fuente.longitud && fuente.datos[_i] != _q) { _i++; _columna++; }")
+        self._push("if (_i >= fuente.longitud) {")
+        self.indent += 1
+        self._push('fprintf(stderr, "  TOKEN STRING_UNCLOSED L%d:%d\\n", _linea, _columna);')
+        self._push("break;")
+        self.indent -= 1
+        self._push("}")
+        self._push("_i++; _columna++;")
+        self._push("_token_count++;")
+        self._push('fprintf(stderr, "  TOKEN STRING L%d:%d\\n", _linea, _columna);')
+        self.indent -= 1
+        self._push("}")
+        self._push("else if (_c >= '0' && _c <= '9') {")
+        self.indent += 1
+        self._push("int _start = _i;")
+        self._push("while (_i < fuente.longitud && fuente.datos[_i] >= '0' && fuente.datos[_i] <= '9') { _i++; }")
+        self._push("_columna += _i - _start;")
+        self._push("_token_count++;")
+        self._push('fprintf(stderr, "  TOKEN NUMBER L%d:%d\\n", _linea, _columna);')
+        self.indent -= 1
+        self._push("}")
+        self._push("else if ((_c >= 'a' && _c <= 'z') || (_c >= 'A' && _c <= 'Z') || _c == '_') {")
+        self.indent += 1
+        self._push("int _start = _i;")
+        self._push("while (_i < fuente.longitud && (")
+        self._push("    (fuente.datos[_i] >= 'a' && fuente.datos[_i] <= 'z') ||")
+        self._push("    (fuente.datos[_i] >= 'A' && fuente.datos[_i] <= 'Z') ||")
+        self._push("    (fuente.datos[_i] >= '0' && fuente.datos[_i] <= '9') ||")
+        self._push("    fuente.datos[_i] == '_'")
+        self._push(")) { _i++; }")
+        self._push("_columna += _i - _start;")
+        self._push("_token_count++;")
+        self._push('fprintf(stderr, "  TOKEN IDENTIFIER L%d:%d\\n", _linea, _columna);')
+        self.indent -= 1
+        self._push("}")
+        self._push("else {")
+        self.indent += 1
+        self._push("_i++; _columna++;")
+        self._push("_token_count++;")
+        self._push('fprintf(stderr, "  TOKEN CHAR(%c) L%d:%d\\n", _c, _linea, _columna);')
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+        self._push('fprintf(stderr, "Total tokens: %d\\n", _token_count);')
+        self._push("return _token_count;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _emitir_token_defs(self):
+        if self._gen_defs_emitido:
+            return
+        self._gen_defs_emitido = True
+        self.lineas.extend([
+            "// --- Token IDs ---",
+            "#define T_IF 1",
+            "#define T_ELSE 2",
+            "#define T_FUNC 3",
+            "#define T_RET 4",
+            "#define T_SPAWN 5",
+            "#define T_RECOVER 6",
+            "#define T_LISTEN 7",
+            "#define T_WHILE 8",
+            "#define T_IMPORT 9",
+            "#define T_BREAK 10",
+            "#define T_CONTINUE 11",
+            "#define T_DOT 12",
+            "#define T_IDENT 13",
+            "#define T_NUM 14",
+            "#define T_STR 15",
+            "#define T_GT 16",
+            "#define T_LT 17",
+            "#define T_EQ 18",
+            "#define T_NE 19",
+            "#define T_LE 20",
+            "#define T_GE 21",
+            "#define T_ASSIGN 22",
+            "#define T_PLUS 23",
+            "#define T_MINUS 24",
+            "#define T_MUL 25",
+            "#define T_DIV 26",
+            "#define T_MOD 27",
+            "#define T_ARROW 28",
+            "#define T_LPAREN 29",
+            "#define T_RPAREN 30",
+            "#define T_COLON 31",
+            "#define T_COMMA 32",
+            "#define T_NL 33",
+            "#define T_INDENT 34",
+            "#define T_DEDENT 35",
+            "#define T_EOF 36",
+            "#define T_STRUCT 37",
+            "",
+            "#define MAX_TOKS 16384",
+            "typedef struct { int tipo; int linea; int col; char val[256]; } _P_Token;",
+            "static _P_Token _P_tks[MAX_TOKS];",
+            "static int _P_ntks = 0, _P_tpos = 0, _P_p_err = 0;",
+            "static int _P_pila_indent[64], _P_nivel_pila = 0;",
+            "",
+        ])
+
+    def _emitir_parsear(self, nodo: DefinicionFuncion):
+        self._emitir_token_defs()
+        self._gen_tok_c()
+        self._gen_parse()
+        self._push("struct Programa parsear(CadenaSegura fuente) {")
+        self.indent += 1
+        self._push("_P_ntks = 0; _P_tpos = 0; _P_p_err = 0; _P_nivel_pila = 0;")
+        self._push("_P_pila_indent[0] = 0;")
+        self._push("_P_tokenizar(fuente.datos, fuente.longitud);")
+        self._push("_P_procesar_indentacion_final();")
+        self._push("struct Programa _prog = _P_programa();")
+        self._push("return _prog;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _gen_tok_c(self):
+        if self._gen_tok_emitido:
+            return
+        self._gen_tok_emitido = True
+        P = '_P_'
+        self.lineas.extend([
+            "static void " + P + "tokenizar(const char* s, int len) {",
+            "    int i = 0, li = 1, co = 1;",
+            "    while (i < len && " + P + "ntks < MAX_TOKS - 1) {",
+            "        char c = s[i];",
+            "        if (c == ' ' || c == '\\t') { i++; co++; continue; }",
+            "        if (c == '\\n') {",
+            "            " + P + "tks[" + P + "ntks].tipo = T_NL; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
+            "            " + P + "ntks++; i++; li++; co = 1;",
+            "            while (i < len && (s[i]==' '||s[i]=='\\t')) { if(s[i]==' ')co++; else co+=4; i++; }",
+            "            if (i < len && s[i]=='\\n') continue;",
+            "            if (i < len && s[i]=='#') { while(i<len&&s[i]!='\\n')i++; continue; }",
+            "            if (i < len && s[i]=='/' && i+1<len && s[i+1]=='/') { while(i<len&&s[i]!='\\n')i++; continue; }",
+            "            { int _sp = co-1;",
+            "            if (_sp > " + P + "pila_indent[" + P + "nivel_pila]) {",
+            "                " + P + "nivel_pila++; " + P + "pila_indent[" + P + "nivel_pila] = _sp;",
+            "                " + P + "tks[" + P + "ntks].tipo = T_INDENT; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
+            "                " + P + "ntks++;",
+            "            } else if (_sp < " + P + "pila_indent[" + P + "nivel_pila]) {",
+            "                while (" + P + "nivel_pila > 0 && _sp < " + P + "pila_indent[" + P + "nivel_pila]) {",
+            "                    " + P + "tks[" + P + "ntks].tipo = T_DEDENT; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
+            "                    " + P + "ntks++; " + P + "nivel_pila--;",
+            "                }",
+            "            } }",
+            "            continue;",
+            "        }",
+            "        if (c == '/' && i+1 < len && s[i+1] == '/') {",
+            "            while (i < len && s[i] != '\\n') i++; continue;",
+            "        }",
+            "        if (c == '#') {",
+            "            while (i < len && s[i] != '\\n') i++; continue;",
+            "        }",
+            "        if (c == '\"' || c == '\\'') {",
+            "            char q = c; int st = i; i++; co++;",
+            "            while (i < len && s[i] != q) { i++; co++; }",
+            "            if (i >= len) break;",
+            "            i++; co++;",
+            "            int vl = (i - st - 2) < 255 ? (i - st - 2) : 255;",
+            "            strncpy(" + P + "tks[" + P + "ntks].val, s + st + 1, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
+            "            " + P + "tks[" + P + "ntks].tipo = T_STR; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = st;",
+            "            " + P + "ntks++; continue;",
+            "        }",
+            "        if (c >= '0' && c <= '9') {",
+            "            int st = i; while (i < len && s[i] >= '0' && s[i] <= '9') i++;",
+            "            int vl = (i - st) < 255 ? (i - st) : 255;",
+            "            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
+            "            " + P + "tks[" + P + "ntks].tipo = T_NUM; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = st;",
+            "            " + P + "ntks++; co += (i - st); continue;",
+            "        }",
+            "        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {",
+            "            int st = i;",
+            "            while (i < len && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) i++;",
+            "            int vl = (i - st) < 255 ? (i - st) : 255;",
+            "            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
+            "            " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = st;",
+            '            if (strcmp(' + P + 'tks[' + P + 'ntks].val, "si") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "if") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_IF;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "sino") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "else") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_ELSE;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "funcion") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "function") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_FUNC;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "retornar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "return") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_RET;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "lanzar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "spawn") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_SPAWN;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "recuperar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "recover") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_RECOVER;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "escuchar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "listen") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_LISTEN;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "mientras") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "while") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_WHILE;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "importar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "import") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_IMPORT;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "romper") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "break") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_BREAK;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "siguiente") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "continue") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_CONTINUE;',
+            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "estructura") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "structure") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_STRUCT;',
+            '            else { ' + P + 'tks[' + P + 'ntks].tipo = T_IDENT; }',
+            "            " + P + "ntks++; co += (i - st); continue;",
+            "        }",
+            "        if (i+1 < len) {",
+            "            if (c == '-' && s[i+1] == '>') {",
+            "                " + P + "tks[" + P + "ntks].tipo = T_ARROW; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
+            "                " + P + "ntks++; i+=2; co+=2; continue;",
+            "            }",
+            "            if (c == '=' && s[i+1] == '=') {",
+            "                " + P + "tks[" + P + "ntks].tipo = T_EQ; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
+            "                " + P + "ntks++; i+=2; co+=2; continue;",
+            "            }",
+            "            if (c == '!' && s[i+1] == '=') {",
+            "                " + P + "tks[" + P + "ntks].tipo = T_NE; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
+            "                " + P + "ntks++; i+=2; co+=2; continue;",
+            "            }",
+            "            if (c == '<' && s[i+1] == '=') {",
+            "                " + P + "tks[" + P + "ntks].tipo = T_LE; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
+            "                " + P + "ntks++; i+=2; co+=2; continue;",
+            "            }",
+            "            if (c == '>' && s[i+1] == '=') {",
+            "                " + P + "tks[" + P + "ntks].tipo = T_GE; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
+            "                " + P + "ntks++; i+=2; co+=2; continue;",
+            "            }",
+            "        }",
+            "        {",
+            "            int tt = T_EOF;",
+            "            if (c == '=') tt = T_ASSIGN;",
+            "            else if (c == '+') tt = T_PLUS;",
+            "            else if (c == '-') tt = T_MINUS;",
+            "            else if (c == '*') tt = T_MUL;",
+            "            else if (c == '/') tt = T_DIV;",
+            "            else if (c == '%') tt = T_MOD;",
+            "            else if (c == '(') tt = T_LPAREN;",
+            "            else if (c == ')') tt = T_RPAREN;",
+            "            else if (c == ':') tt = T_COLON;",
+            "            else if (c == ',') tt = T_COMMA;",
+            "            else if (c == '.') tt = T_DOT;",
+            "            else if (c == '>') tt = T_GT;",
+            "            else if (c == '<') tt = T_LT;",
+            "            " + P + "tks[" + P + "ntks].tipo = tt; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
+            "            " + P + "ntks++; i++; co++;",
+            "        }",
+            "    }",
+            "    " + P + "tks[" + P + "ntks].tipo = T_EOF; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
+            "    " + P + "ntks++;",
+            "}",
+            "",
+            "static void " + P + "procesar_indentacion_final() {",
+            "    while (" + P + "nivel_pila > 0) {",
+            "        " + P + "tks[" + P + "ntks].tipo = T_DEDENT; " + P + "tks[" + P + "ntks].linea = " + P + "tks[" + P + "ntks-1].linea; " + P + "tks[" + P + "ntks].col = 0;",
+            "        " + P + "ntks++; " + P + "nivel_pila--;",
+            "    }",
+            "}",
+            "",
+        ])
+    def _gen_parse(self):
+        if self._gen_parse_emitido:
+            return
+        self._gen_parse_emitido = True
+        # Write parser C code with _P_ prefix
+        _P = '_P_'
+        self.lineas.extend([
+            "// --- AST builder helpers ---",
+            "static CadenaSegura " + _P + "cs(const char* s) {",
+            "    CadenaSegura c; c.longitud = (int)strlen(s);",
+            "    char* d = (char*)malloc(c.longitud + 1); strcpy(d, s); c.datos = d; return c;",
+            "}",
+            "static struct ListaNodo* " + _P + "mk_list(struct Nodo* h, struct ListaNodo* t) {",
+            "    struct ListaNodo* n = (struct ListaNodo*)calloc(1,sizeof(struct ListaNodo));",
+            "    n->cabeza = h; n->cola = t; return n;",
+            "}",
+            "",
+        ])
+        # Helper + globals
+        self.lineas.extend([
+            "static " + _P + "Token* " + _P + "mirar() { return &" + _P + "tks[" + _P + "tpos]; }",
+            "static void " + _P + "avanzar() { if (" + _P + "tpos < " + _P + "ntks) " + _P + "tpos++; }",
+            "static int " + _P + "posible(int t) { return " + _P + "mirar()->tipo == t ? 1 : 0; }",
+            "static int " + _P + "esperar(int t) {",
+            "    if (" + _P + "mirar()->tipo == t) { " + _P + "avanzar(); return 1; }",
+            '    fprintf(stderr, "[PARSER] L%d:%d: esperaba token %d, encontre %d\\n",',
+            "            " + _P + "mirar()->linea, " + _P + "mirar()->col, t, " + _P + "mirar()->tipo);",
+            "    " + _P + "p_err++; return 0;",
+            "}",
+            "static void " + _P + "sinc_skip() {",
+            "    while (" + _P + "tpos < " + _P + "ntks) {",
+            "        int tt = " + _P + "mirar()->tipo;",
+            "        if (tt == T_NL || tt == T_DEDENT || tt == T_EOF || tt == T_COMMA || tt == T_RPAREN || tt == T_COLON) break;",
+            "        " + _P + "avanzar();",
+            "    }",
+            "}",
+            "",
+            "// Forward declarations",
+            "static struct Nodo* " + _P + "expr();",
+            "static struct ListaNodo* " + _P + "bloque();",
+            "static struct Nodo* " + _P + "sentencia();",
+            "static struct Nodo* " + _P + "comp();",
+            "static struct Nodo* " + _P + "suma();",
+            "static struct Nodo* " + _P + "term();",
+            "static struct Nodo* " + _P + "una();",
+            "static struct Nodo* " + _P + "prim();",
+            "static struct Programa " + _P + "programa();",
+        ])
+        # Now emit the function bodies using a clean string template
+        B = """
+static struct ListaNodo* """ + _P + """bloque() {
+    if (!""" + _P + """esperar(T_NL)) { """ + _P + """sinc_skip(); return NULL; }
+    if (!""" + _P + """esperar(T_INDENT)) { """ + _P + """sinc_skip(); return NULL; }
+    struct ListaNodo* lst = NULL;
+    struct ListaNodo** cur = &lst;
+    while (""" + _P + """mirar()->tipo != T_DEDENT && """ + _P + """mirar()->tipo != T_EOF) {
+        if (""" + _P + """mirar()->tipo == T_NL) { """ + _P + """avanzar(); continue; }
+        struct Nodo* st=""" + _P + """sentencia();
+        if (st) { *cur=""" + _P + """mk_list(st,NULL); cur=&(*cur)->cola; }
+    }
+    """ + _P + """esperar(T_DEDENT);
+    return lst;
+}
+static struct Nodo* """ + _P + """sentencia() {
+    while (""" + _P + """mirar()->tipo == T_NL) { """ + _P + """avanzar(); }
+    """ + _P + """Token* t = """ + _P + """mirar();
+    if (t->tipo == T_FUNC) {
+        """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); return NULL; }
+        char _nm[256]; strcpy(_nm, """ + _P + """mirar()->val);
+        """ + _P + """avanzar();
+        """ + _P + """esperar(T_LPAREN);
+        struct ListaNodo* params = NULL;
+        struct ListaNodo** pcur = &params;
+        if (""" + _P + """mirar()->tipo != T_RPAREN) {
+            while (1) {
+                int is_transfer = 0;
+                if (""" + _P + """mirar()->tipo == T_ARROW) { is_transfer=1; """ + _P + """avanzar(); }
+                if (""" + _P + """mirar()->tipo != T_IDENT) break;
+                char _pn[256]; strcpy(_pn, """ + _P + """mirar()->val);
+                """ + _P + """avanzar();
+                """ + _P + """esperar(T_COLON);
+                if (""" + _P + """mirar()->tipo != T_IDENT) break;
+                char _pt[256]; strcpy(_pt, """ + _P + """mirar()->val);
+                """ + _P + """avanzar();
+                struct Parametro* pp = (struct Parametro*)calloc(1,sizeof(struct Parametro));
+                pp->tipo=""" + _P + """cs("Parametro");
+                pp->nombre=""" + _P + """cs(_pn); pp->tipo_param=""" + _P + """cs(_pt);
+                pp->es_transferencia = is_transfer;
+                *pcur=""" + _P + """mk_list((struct Nodo*)pp,NULL); pcur=&(*pcur)->cola;
+                if (""" + _P + """mirar()->tipo != T_COMMA) break;
+                """ + _P + """avanzar();
+            }
+        }
+        """ + _P + """esperar(T_RPAREN); """ + _P + """esperar(T_ARROW);
+        if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); return NULL; }
+        char _rt[256]; strcpy(_rt, """ + _P + """mirar()->val);
+        """ + _P + """avanzar();
+        """ + _P + """esperar(T_COLON);
+        struct ListaNodo* body=""" + _P + """bloque();
+        struct DefinicionFuncion* n = (struct DefinicionFuncion*)calloc(1,sizeof(struct DefinicionFuncion));
+        n->tipo=""" + _P + """cs("DefinicionFuncion");
+        n->nombre=""" + _P + """cs(_nm); n->parametros=(struct ListaParametro*)params;
+        n->tipo_retorno=""" + _P + """cs(_rt); n->cuerpo=body;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_STRUCT) {
+        """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); return NULL; }
+        char _snm[256]; strcpy(_snm, """ + _P + """mirar()->val);
+        """ + _P + """avanzar();
+        """ + _P + """esperar(T_COLON);
+        if (!""" + _P + """esperar(T_NL)) { """ + _P + """sinc_skip(); return NULL; }
+        if (!""" + _P + """esperar(T_INDENT)) { """ + _P + """sinc_skip(); return NULL; }
+        struct ListaParametro* campos = NULL;
+        struct ListaParametro** ccur = &campos;
+        while (""" + _P + """mirar()->tipo != T_DEDENT && """ + _P + """mirar()->tipo != T_EOF) {
+            if (""" + _P + """mirar()->tipo == T_NL) { """ + _P + """avanzar(); continue; }
+            if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); break; }
+            char _pn[256]; strcpy(_pn, """ + _P + """mirar()->val);
+            """ + _P + """avanzar();
+            """ + _P + """esperar(T_COLON);
+            if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); break; }
+            char _pt[256]; strcpy(_pt, """ + _P + """mirar()->val);
+            """ + _P + """avanzar();
+            struct Parametro* pp=(struct Parametro*)calloc(1,sizeof(struct Parametro));
+            pp->tipo=""" + _P + """cs("Parametro"); pp->nombre=""" + _P + """cs(_pn); pp->tipo_param=""" + _P + """cs(_pt); pp->es_transferencia=0;
+            *ccur=(struct ListaParametro*)""" + _P + """mk_list((struct Nodo*)pp,NULL); ccur=&(*ccur)->cola;
+        }
+        """ + _P + """esperar(T_DEDENT);
+        struct DefinicionEstructura* n = (struct DefinicionEstructura*)calloc(1,sizeof(struct DefinicionEstructura));
+        n->tipo=""" + _P + """cs("DefinicionEstructura"); n->nombre=""" + _P + """cs(_snm); n->campos=campos;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_IF) {
+        """ + _P + """avanzar();
+        struct Nodo* cond=""" + _P + """expr();
+        """ + _P + """esperar(T_COLON);
+        struct ListaNodo* cpo=""" + _P + """bloque();
+        struct ListaNodo* sino = NULL;
+        if (""" + _P + """mirar()->tipo == T_ELSE) { """ + _P + """avanzar(); """ + _P + """esperar(T_COLON); sino=""" + _P + """bloque(); }
+        struct SentenciaSi* n = (struct SentenciaSi*)calloc(1,sizeof(struct SentenciaSi));
+        n->tipo=""" + _P + """cs("SentenciaSi"); n->condicion=cond;
+        n->cuerpo=cpo; n->cuerpo_sino=sino;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_WHILE) {
+        """ + _P + """avanzar();
+        struct Nodo* cond=""" + _P + """expr();
+        """ + _P + """esperar(T_COLON);
+        struct ListaNodo* cpo=""" + _P + """bloque();
+        struct SentenciaMientras* n = (struct SentenciaMientras*)calloc(1,sizeof(struct SentenciaMientras));
+        n->tipo=""" + _P + """cs("SentenciaMientras"); n->condicion=cond; n->cuerpo=cpo;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_RET) {
+        """ + _P + """avanzar();
+        struct Nodo* expr = NULL;
+        if (""" + _P + """mirar()->tipo == T_ARROW) { """ + _P + """avanzar(); expr=""" + _P + """expr(); }
+        else if (""" + _P + """mirar()->tipo != T_NL && """ + _P + """mirar()->tipo != T_DEDENT && """ + _P + """mirar()->tipo != T_EOF) { expr=""" + _P + """expr(); }
+        struct SentenciaRetornar* n = (struct SentenciaRetornar*)calloc(1,sizeof(struct SentenciaRetornar));
+        n->tipo=""" + _P + """cs("SentenciaRetornar"); n->expr=expr;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_SPAWN) { """ + _P + """avanzar();
+        struct Nodo* ll=""" + _P + """expr();
+        struct SentenciaLanzar* n = (struct SentenciaLanzar*)calloc(1,sizeof(struct SentenciaLanzar));
+        n->tipo=""" + _P + """cs("SentenciaLanzar"); n->llamada=ll;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_RECOVER) { """ + _P + """avanzar();
+        struct Nodo* ac=""" + _P + """expr(); """ + _P + """esperar(T_COLON);
+        struct Nodo* pb=""" + _P + """expr();
+        struct SentenciaRecuperar* n = (struct SentenciaRecuperar*)calloc(1,sizeof(struct SentenciaRecuperar));
+        n->tipo=""" + _P + """cs("SentenciaRecuperar"); n->accion_critica=ac; n->plan_b=pb;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_LISTEN) { """ + _P + """avanzar();
+        struct Nodo* cn=""" + _P + """expr(); """ + _P + """esperar(T_ARROW);
+        struct Nodo* rp=""" + _P + """expr();
+        struct SentenciaEscuchar* n = (struct SentenciaEscuchar*)calloc(1,sizeof(struct SentenciaEscuchar));
+        n->tipo=""" + _P + """cs("SentenciaEscuchar"); n->canal=cn; n->respuesta=rp;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_BREAK) { """ + _P + """avanzar();
+        struct SentenciaRomper* n = (struct SentenciaRomper*)calloc(1,sizeof(struct SentenciaRomper));
+        n->tipo=""" + _P + """cs("SentenciaRomper");
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_CONTINUE) { """ + _P + """avanzar();
+        struct SentenciaSiguiente* n = (struct SentenciaSiguiente*)calloc(1,sizeof(struct SentenciaSiguiente));
+        n->tipo=""" + _P + """cs("SentenciaSiguiente");
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_IMPORT) { """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); return NULL; }
+        char _imp[256]; strcpy(_imp, """ + _P + """mirar()->val); int _iml = (int)strlen(_imp);
+        """ + _P + """avanzar();
+        while (""" + _P + """mirar()->tipo == T_DOT) { """ + _P + """avanzar(); if (""" + _P + """mirar()->tipo != T_IDENT) break; strcat(_imp,"."); strcat(_imp,""" + _P + """mirar()->val); """ + _P + """avanzar(); }
+        struct SentenciaImportar* n = (struct SentenciaImportar*)calloc(1,sizeof(struct SentenciaImportar));
+        n->tipo=""" + _P + """cs("SentenciaImportar"); n->ruta=""" + _P + """cs(_imp);
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_IDENT && """ + _P + """tpos + 1 < """ + _P + """ntks && """ + _P + """tks[""" + _P + """tpos + 1].tipo == T_ASSIGN) {
+        char _vn[256]; strcpy(_vn, t->val);
+        """ + _P + """avanzar(); """ + _P + """avanzar();
+        struct Nodo* val=""" + _P + """expr();
+        struct AsignacionVariable* n = (struct AsignacionVariable*)calloc(1,sizeof(struct AsignacionVariable));
+        n->tipo=""" + _P + """cs("AsignacionVariable");
+        n->nombre=""" + _P + """cs(_vn); n->expresion=val;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_IDENT && """ + _P + """tpos + 1 < """ + _P + """ntks && """ + _P + """tks[""" + _P + """tpos + 1].tipo == T_DOT) {
+        char _vn[256]; strcpy(_vn, t->val);
+        """ + _P + """avanzar(); """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo == T_IDENT) {
+            char _cn[256]; strcpy(_cn, """ + _P + """mirar()->val);
+            if (""" + _P + """tpos + 1 < """ + _P + """ntks && """ + _P + """tks[""" + _P + """tpos + 1].tipo == T_ASSIGN) {
+                """ + _P + """avanzar(); """ + _P + """avanzar();
+                struct Nodo* val=""" + _P + """expr();
+                struct Identificador* obj = (struct Identificador*)calloc(1,sizeof(struct Identificador));
+                obj->tipo=""" + _P + """cs("Identificador"); obj->nombre=""" + _P + """cs(_vn);
+                struct AsignacionCampo* n = (struct AsignacionCampo*)calloc(1,sizeof(struct AsignacionCampo));
+                n->tipo=""" + _P + """cs("AsignacionCampo");
+                n->objeto=(struct Nodo*)obj; n->nombre_campo=""" + _P + """cs(_cn); n->expresion=val;
+                return (struct Nodo*)n;
+            }
+        }
+    }
+    { struct Nodo* e=""" + _P + """expr();
+        struct SentenciaExpr* n = (struct SentenciaExpr*)calloc(1,sizeof(struct SentenciaExpr));
+        n->tipo=""" + _P + """cs("SentenciaExpr"); n->expr=e;
+        return (struct Nodo*)n;
+    }
+}
+static struct Nodo* """ + _P + """expr() { return """ + _P + """comp(); }
+
+static struct Nodo* """ + _P + """comp() {
+    struct Nodo* izq=""" + _P + """suma();
+    while (1) {
+        int tt=""" + _P + """mirar()->tipo;
+        if (tt!=T_EQ&&tt!=T_NE&&tt!=T_LT&&tt!=T_GT&&tt!=T_LE&&tt!=T_GE) break;
+        """ + _P + """avanzar();
+        struct Nodo* der=""" + _P + """suma();
+        struct OpBinaria* n=(struct OpBinaria*)calloc(1,sizeof(struct OpBinaria));
+        n->tipo=""" + _P + """cs("OpBinaria"); n->izquierdo=izq; n->derecho=der;
+        n->operador=(struct Token*)calloc(1,sizeof(struct Token)); n->operador->tipo=tt; n->operador->linea=0; n->operador->columna=0;
+        {char _b[4]={0,0,0,0};if(tt==T_EQ){_b[0]='=';_b[1]='=';}
+        else if(tt==T_NE){_b[0]='!';_b[1]='=';}
+        else if(tt==T_LE){_b[0]='<';_b[1]='=';}
+        else if(tt==T_GE){_b[0]='>';_b[1]='=';}
+        else if(tt==T_LT){_b[0]='<';}else{_b[0]='>';}
+        n->operador->lexema=""" + _P + """cs(_b);}
+        izq=(struct Nodo*)n;
+    }
+    return izq;
+}
+static struct Nodo* """ + _P + """suma() {
+    struct Nodo* izq=""" + _P + """term();
+    while (""" + _P + """mirar()->tipo==T_PLUS||""" + _P + """mirar()->tipo==T_MINUS) {
+        int tt=""" + _P + """mirar()->tipo; """ + _P + """avanzar();
+        struct Nodo* der=""" + _P + """term();
+        struct OpBinaria* n=(struct OpBinaria*)calloc(1,sizeof(struct OpBinaria));
+        n->tipo=""" + _P + """cs("OpBinaria"); n->izquierdo=izq; n->derecho=der;
+        n->operador=(struct Token*)calloc(1,sizeof(struct Token)); n->operador->tipo=tt; n->operador->linea=0; n->operador->columna=0;
+        n->operador->lexema=""" + _P + """cs(tt==T_PLUS?"+":"-");
+        izq=(struct Nodo*)n;
+    }
+    return izq;
+}
+static struct Nodo* """ + _P + """term() {
+    struct Nodo* izq=""" + _P + """una();
+    while (""" + _P + """mirar()->tipo==T_MUL||""" + _P + """mirar()->tipo==T_DIV||""" + _P + """mirar()->tipo==T_MOD) {
+        int tt=""" + _P + """mirar()->tipo; """ + _P + """avanzar();
+        struct Nodo* der=""" + _P + """una();
+        struct OpBinaria* n=(struct OpBinaria*)calloc(1,sizeof(struct OpBinaria));
+        n->tipo=""" + _P + """cs("OpBinaria"); n->izquierdo=izq; n->derecho=der;
+        n->operador=(struct Token*)calloc(1,sizeof(struct Token)); n->operador->tipo=tt; n->operador->linea=0; n->operador->columna=0;
+        n->operador->lexema=""" + _P + """cs(tt==T_MUL?"*":tt==T_DIV?"/":"%");
+        izq=(struct Nodo*)n;
+    }
+    return izq;
+}
+static struct Nodo* """ + _P + """una() {
+    if (""" + _P + """mirar()->tipo==T_MINUS||""" + _P + """mirar()->tipo==T_PLUS) {
+        int tt=""" + _P + """mirar()->tipo; """ + _P + """avanzar();
+        struct Nodo* e=""" + _P + """una();
+        struct OpUnaria* n=(struct OpUnaria*)calloc(1,sizeof(struct OpUnaria));
+        n->tipo=""" + _P + """cs("OpUnaria"); n->expr=e;
+        n->operador=(struct Token*)calloc(1,sizeof(struct Token)); n->operador->tipo=tt; n->operador->linea=0; n->operador->columna=0;
+        n->operador->lexema=""" + _P + """cs(tt==T_PLUS?"+":"-");
+        return (struct Nodo*)n;
+    }
+    return """ + _P + """prim();
+}
+static struct Nodo* """ + _P + """prim() {
+    """ + _P + """Token* t=""" + _P + """mirar();
+    if (t->tipo==T_NUM) {
+        struct LiteralNumero* n=(struct LiteralNumero*)calloc(1,sizeof(struct LiteralNumero));
+        n->tipo=""" + _P + """cs("LiteralNumero"); n->valor=atoi(t->val);
+        """ + _P + """avanzar(); return (struct Nodo*)n;
+    }
+    if (t->tipo==T_STR) {
+        struct LiteralCadena* n=(struct LiteralCadena*)calloc(1,sizeof(struct LiteralCadena));
+        n->tipo=""" + _P + """cs("LiteralCadena"); n->valor=""" + _P + """cs(t->val);
+        """ + _P + """avanzar(); return (struct Nodo*)n;
+    }
+    if (t->tipo==T_IDENT) {
+        char _nm[256]; strcpy(_nm, t->val);
+        """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo==T_LPAREN) {
+            """ + _P + """avanzar();
+            struct ListaNodo* args=NULL; struct ListaNodo** acur=&args;
+            if (""" + _P + """mirar()->tipo!=T_RPAREN) {
+                while (1) {
+                    if (""" + _P + """mirar()->tipo==T_ARROW) {
+                        """ + _P + """avanzar();
+                        struct Nodo* ae=""" + _P + """expr();
+                        struct ArgumentoTransferido* at=(struct ArgumentoTransferido*)calloc(1,sizeof(struct ArgumentoTransferido));
+                        at->tipo=""" + _P + """cs("ArgumentoTransferido"); at->expr=ae;
+                        *acur=""" + _P + """mk_list((struct Nodo*)at,NULL);
+                    } else { *acur=""" + _P + """mk_list(""" + _P + """expr(),NULL); }
+                    acur=&(*acur)->cola;
+                    if (""" + _P + """mirar()->tipo!=T_COMMA) break;
+                    """ + _P + """avanzar();
+                }
+            }
+            """ + _P + """esperar(T_RPAREN);
+            if(strcmp(_nm,"log")==0) {
+                struct LogLlamada* n=(struct LogLlamada*)calloc(1,sizeof(struct LogLlamada));
+                n->tipo=""" + _P + """cs("LogLlamada"); n->argumentos=args;
+                return (struct Nodo*)n;
+            }
+            struct LlamadaFuncion* n=(struct LlamadaFuncion*)calloc(1,sizeof(struct LlamadaFuncion));
+            n->tipo=""" + _P + """cs("LlamadaFuncion"); n->nombre=""" + _P + """cs(_nm); n->argumentos=args;
+            return (struct Nodo*)n;
+        }
+        if (""" + _P + """mirar()->tipo==T_DOT) {
+            """ + _P + """avanzar();
+            if (""" + _P + """mirar()->tipo==T_IDENT) {
+                struct Identificador* obj=(struct Identificador*)calloc(1,sizeof(struct Identificador));
+                obj->tipo=""" + _P + """cs("Identificador"); obj->nombre=""" + _P + """cs(_nm);
+                strcpy(_nm, """ + _P + """mirar()->val); """ + _P + """avanzar();
+                struct ExprAccesoCampo* n=(struct ExprAccesoCampo*)calloc(1,sizeof(struct ExprAccesoCampo));
+                n->tipo=""" + _P + """cs("ExprAccesoCampo"); n->objeto=(struct Nodo*)obj; n->nombre_campo=""" + _P + """cs(_nm);
+                return (struct Nodo*)n;
+            }
+        }
+        struct Identificador* n=(struct Identificador*)calloc(1,sizeof(struct Identificador));
+        n->tipo=""" + _P + """cs("Identificador"); n->nombre=""" + _P + """cs(_nm);
+        return (struct Nodo*)n;
+    }
+    if (t->tipo==T_LPAREN) { """ + _P + """avanzar(); struct Nodo* e=""" + _P + """expr(); """ + _P + """esperar(T_RPAREN); return e; }
+    fprintf(stderr,"[PARSER] L%d:%d: expresion inesperada token=%d\\n",t->linea,t->col,t->tipo);
+    """ + _P + """p_err++; """ + _P + """avanzar(); return NULL;
+}
+static struct Programa """ + _P + """programa() {
+    struct ListaNodo* lst=NULL; struct ListaNodo** cur=&lst;
+    while (""" + _P + """mirar()->tipo!=T_EOF) {
+        if (""" + _P + """mirar()->tipo==T_NL||""" + _P + """mirar()->tipo==T_DEDENT) { """ + _P + """avanzar(); continue; }
+        struct Nodo* st=""" + _P + """sentencia();
+        if (st) { *cur=""" + _P + """mk_list(st,NULL); cur=&(*cur)->cola; }
+    }
+    struct Programa p; memset(&p,0,sizeof(p));
+    p.tipo=""" + _P + """cs("Programa"); p.sentencias=lst;
+    return p;
+}
+"""
+        for ln in B.strip().split('\n'):
+            self.lineas.append(ln)
+
+    def _emitir_generar(self, nodo: DefinicionFuncion):
+        self.lineas.extend(["// --- Generador de C ---"])
+        self._emitir_token_defs()
+        self._gen_tok_c()
+        self._gen_parse()
+        # Use a placeholder that won't collide with C braces
+        _PH = '@@P@@'
+        H = f"""
+// --- AST Walker ---
+static int {_PH}indent = 0;
+static FILE* {_PH}out = NULL;
+static char {_PH}vn[1024][64];
+static char {_PH}vt[1024][64];
+static int {_PH}nv = 0;
+static char {_PH}ret_type[64];
+
+static void {_PH}reset() {{ {_PH}nv = 0; }}
+static int {_PH}find(const char* n) {{ for(int i=0;i<{_PH}nv;i++) if(strcmp({_PH}vn[i],n)==0) return i; return -1; }}
+static const char* {_PH}decl(const char* n, const char* t) {{
+    int i={_PH}find(n); if(i>=0) return {_PH}vt[i];
+    if({_PH}nv<1024){{ strcpy({_PH}vn[{_PH}nv],n); strcpy({_PH}vt[{_PH}nv],t); {_PH}nv++; }}
+    return t;
+}}
+
+static void {_PH}emit(const char* s) {{
+    for(int i=0;i<{_PH}indent;i++) fprintf({_PH}out,"    ");
+    fprintf({_PH}out,"%s\\n",s);
+}}
+
+static void {_PH}cp(char* d, CadenaSegura cs) {{ memcpy(d,cs.datos,cs.longitud); d[cs.longitud]=0; }}
+
+static const char* {_PH}tex(struct Nodo* n) {{
+    if(!n) return "int";
+    const char* t=n->tipo.datos;
+    if(strcmp(t,"LiteralNumero")==0) return "int";
+    if(strcmp(t,"LiteralCadena")==0) return "CadenaSegura";
+    if(strcmp(t,"Identificador")==0) {{ struct Identificador* i=(struct Identificador*)n; char m[256]; {_PH}cp(m,i->nombre); int j={_PH}find(m); return j>=0?{_PH}vt[j]:"int"; }}
+    if(strcmp(t,"OpBinaria")==0||strcmp(t,"OpUnaria")==0) return "int";
+    if(strcmp(t,"LlamadaFuncion")==0) {{
+        struct LlamadaFuncion* l=(struct LlamadaFuncion*)n;
+        char m[256]; {_PH}cp(m,l->nombre);
+        if(strcmp(m,"_argc")==0) return "int";
+        if(strcmp(m,"_argv")==0||strcmp(m,"leer")==0||strcmp(m,"leer_linea")==0||strcmp(m,"concat")==0) return "CadenaSegura";
+        if(strcmp(m,"abrir")==0) return "Canal";
+        if(strcmp(m,"cerrar")==0||strcmp(m,"salir")==0||strcmp(m,"escribir")==0||strcmp(m,"escribir_linea")==0) return "void";
+        if(strcmp(m,"reserva")==0||strcmp(m,"suma")==0||strcmp(m,"producto")==0||strcmp(m,"relu")==0
+   ||strcmp(m,"crear_tensor")==0||strcmp(m,"suma_tensor")==0||strcmp(m,"producto_punto")==0) return "Tensor";
+        if(strcmp(m,"tokenizar")==0) return "int";
+        if(strcmp(m,"parsear")==0) return "struct Programa";
+        if(strcmp(m,"generar")==0) return "int";
+        if(strcmp(m,"libera")==0) return "void";
+        return "int";
+    }}
+    if(strcmp(t,"ExprAccesoCampo")==0||strcmp(t,"ArgumentoTransferido")==0) return "int";
+    if(strcmp(t,"ExprTensor")==0) return "Tensor";
+    return "int";
+}}
+
+static void {_PH}ea(struct Nodo* n, char* b, int sz);
+static void {_PH}vl(struct ListaNodo* l);
+static void {_PH}v(struct Nodo* n);
+
+static void {_PH}vl(struct ListaNodo* l) {{ while(l){{ {_PH}v(l->cabeza); l=l->cola; }} }}
+
+static void {_PH}ea(struct Nodo* n, char* b, int sz) {{
+    char i[512],d[512],o[512],m[256];
+    if(!n){{ snprintf(b,sz,"0"); return; }}
+    const char* t=n->tipo.datos;
+    if(strcmp(t,"LiteralNumero")==0){{ struct LiteralNumero* x=(struct LiteralNumero*)n; snprintf(b,sz,"%d",x->valor); return; }}
+    if(strcmp(t,"LiteralCadena")==0){{ struct LiteralCadena* x=(struct LiteralCadena*)n; snprintf(b,sz,"(CadenaSegura){{.longitud=%d,.datos=\\"%.*s\\"}}",x->valor.longitud,x->valor.longitud,x->valor.datos); return; }}
+    if(strcmp(t,"Identificador")==0){{ struct Identificador* x=(struct Identificador*)n; char _tmp_nm[256]; {_PH}cp(_tmp_nm,x->nombre); if(strcmp(_tmp_nm,"nulo")==0) strcpy(b,"NULL"); else strcpy(b,_tmp_nm); return; }}
+    if(strcmp(t,"OpBinaria")==0){{ struct OpBinaria* x=(struct OpBinaria*)n; {_PH}ea(x->izquierdo,i,512); {_PH}ea(x->derecho,d,512); char _o[16]; {_PH}cp(_o,x->operador->lexema); snprintf(b,sz,"(%s %s %s)",i,_o,d); return; }}
+    if(strcmp(t,"OpUnaria")==0){{ struct OpUnaria* x=(struct OpUnaria*)n; {_PH}ea(x->expr,i,512); char _o[16]; {_PH}cp(_o,x->operador->lexema); snprintf(b,sz,"(%s%s)",_o,i); return; }}
+    if(strcmp(t,"LlamadaFuncion")==0){{
+        struct LlamadaFuncion* x=(struct LlamadaFuncion*)n; {_PH}cp(m,x->nombre);
+        char a[4096]=""; int p=0; struct ListaNodo* c=x->argumentos;
+        while(c){{ if(p>0){{ a[p++]=','; a[p++]=' '; }} {_PH}ea(c->cabeza,i,512); int k=0; while(i[k]) a[p++]=i[k++]; c=c->cola; }}
+        a[p]=0; snprintf(b,sz,"%s(%s)",m,a); return;
+    }}
+    if(strcmp(t,"ExprAccesoCampo")==0){{ struct ExprAccesoCampo* x=(struct ExprAccesoCampo*)n; {_PH}ea(x->objeto,o,512); {_PH}cp(m,x->nombre_campo); snprintf(b,sz,"%s.%s",o,m); return; }}
+    if(strcmp(t,"ExprTensor")==0){{ struct ExprTensor* x=(struct ExprTensor*)n; {_PH}ea(x->filas,i,512); {_PH}ea(x->columnas,d,512); snprintf(b,sz,"(Tensor){{.filas=%s,.columnas=%s,.datos=(float*)calloc(%s*%s,sizeof(float))}}",i,d,i,d); return; }}
+    if(strcmp(t,"ArgumentoTransferido")==0){{ struct ArgumentoTransferido* x=(struct ArgumentoTransferido*)n; {_PH}ea(x->expr,b,sz); return; }}
+    snprintf(b,sz,"/*?*/");
+}}
+
+static void {_PH}v_log(struct LogLlamada* n) {{
+    char f[4096]=""; int fp=0,ap=0,fi=1; char b[512]; char pr[4096]="";
+    struct ListaNodo* c=n->argumentos;
+    while(c){{ if(!fi){{ f[fp++]=' '; }} fi=0; f[fp++]='%'; f[fp++]='s';
+        {_PH}ea(c->cabeza,b,512); if(ap>0){{ pr[ap++]=','; pr[ap++]=' '; }} int k=0; while(b[k]) pr[ap++]=b[k++]; c=c->cola;
+    }}
+    f[fp]=0; pr[ap]=0; char ln[4096];
+    if(ap>0) snprintf(ln,sizeof(ln),"printf(\\"%s\\\\n\\",%s);",f,pr);
+    else snprintf(ln,sizeof(ln),"printf(\\"%s\\\\n\\");",f);
+    {_PH}emit(ln);
+}}
+
+static const char* {_PH}mt(const char* st) {{
+    if(strcmp(st,"entero")==0||strcmp(st,"int")==0) return "int";
+    if(strcmp(st,"texto")==0||strcmp(st,"cadena")==0) return "CadenaSegura";
+    if(strcmp(st,"nulo")==0||strcmp(st,"vacio")==0) return "void";
+    if(strcmp(st,"decimal")==0||strcmp(st,"real")==0) return "float";
+    if(strcmp(st,"logico")==0||strcmp(st,"booleano")==0) return "int";
+    if(strcmp(st,"Canal")==0||strcmp(st,"canal")==0) return "Canal";
+    if(strcmp(st,"Tensor")==0||strcmp(st,"tensor")==0) return "Tensor";
+    return NULL;
+}}
+static void {_PH}vest(struct DefinicionEstructura* n) {{
+    char ln[4096];
+    snprintf(ln,sizeof(ln),"typedef struct %s {{",n->nombre.datos); {_PH}emit(ln);
+    {_PH}indent++;
+    struct ListaParametro* c=n->campos;
+    while(c){{ struct Parametro* p=(struct Parametro*)c->cabeza; char pn[256]; {_PH}cp(pn,p->nombre); char pt[256]; {_PH}cp(pt,p->tipo_param); const char* ct={_PH}mt(pt); if(ct){{ snprintf(ln,sizeof(ln),"%s %s;",ct,pn); }}else{{ snprintf(ln,sizeof(ln),"struct %s* %s;",pt,pn); }} {_PH}emit(ln); c=c->cola; }}
+    {_PH}indent--; snprintf(ln,sizeof(ln),"}} %s;",n->nombre.datos); {_PH}emit(ln);
+    snprintf(ln,sizeof(ln),"static inline struct %s %s_nuevo() {{",n->nombre.datos,n->nombre.datos); {_PH}emit(ln);
+    {_PH}indent++; snprintf(ln,sizeof(ln),"struct %s _r={{0}}; return _r;",n->nombre.datos); {_PH}emit(ln);
+    {_PH}indent--; {_PH}emit("}}");
+}}
+
+static void {_PH}v(struct Nodo* n) {{
+    if(!n) return;
+    char b[4096],b2[4096],m[256],v[4096];
+    const char* t=n->tipo.datos;
+    if(strcmp(t,"DefinicionFuncion")==0){{
+        {_PH}reset();
+        struct DefinicionFuncion* f=(struct DefinicionFuncion*)n; {_PH}cp(m,f->nombre);
+        char ps[4096]="void"; int pp=0,fi=1; struct ListaParametro* pc=f->parametros;
+        while(pc){{ struct Parametro* p=(struct Parametro*)pc->cabeza; char pn[256]; {_PH}cp(pn,p->nombre); char pt[256]; {_PH}cp(pt,p->tipo_param);
+            if(fi){{ pp=0; fi=0; }}else{{ ps[pp++]=','; ps[pp++]=' '; }}
+            const char* _ct={_PH}mt(pt);
+            char _tb[64]; if(_ct){{ strcpy(_tb,_ct); }}else{{ snprintf(_tb,sizeof(_tb),"struct %s",pt); }} _ct=_tb;
+            int k=0; while(_ct[k]) ps[pp++]=_ct[k++]; ps[pp++]=' '; k=0; while(pn[k]) ps[pp++]=pn[k++];
+            {_PH}decl(pn,_ct); pc=pc->cola;
+        }}
+        ps[pp]=0; char rt[64]; {_PH}cp(rt,f->tipo_retorno);
+        {{
+            const char* _ct={_PH}mt(rt);
+            if(_ct){{ snprintf(b,sizeof(b),"%s %s(%s)",_ct,m,ps); strcpy({_PH}ret_type,_ct); }}
+            else{{ snprintf(b,sizeof(b),"struct %s %s(%s)",rt,m,ps); snprintf({_PH}ret_type,sizeof({_PH}ret_type),"struct %s",rt); }}
+        }}
+        {_PH}emit(b); {_PH}emit("{{"); {_PH}indent++; {_PH}vl(f->cuerpo); {_PH}indent--; {_PH}emit("}}"); return;
+    }}
+    if(strcmp(t,"SentenciaSi")==0){{
+        struct SentenciaSi* s=(struct SentenciaSi*)n; {_PH}ea(s->condicion,b,4096);
+        snprintf(b2,sizeof(b2),"if (%s) {{",b); {_PH}emit(b2); {_PH}indent++; {_PH}vl(s->cuerpo); {_PH}indent--;
+        if(s->cuerpo_sino){{ {_PH}emit("}} else {{"); {_PH}indent++; {_PH}vl(s->cuerpo_sino); {_PH}indent--; }}
+        {_PH}emit("}}"); return;
+    }}
+    if(strcmp(t,"SentenciaMientras")==0){{
+        struct SentenciaMientras* s=(struct SentenciaMientras*)n; {_PH}ea(s->condicion,b,4096);
+        snprintf(b2,sizeof(b2),"while (%s) {{",b); {_PH}emit(b2); {_PH}indent++; {_PH}vl(s->cuerpo); {_PH}indent--; {_PH}emit("}}"); return;
+    }}
+    if(strcmp(t,"AsignacionVariable")==0){{
+        struct AsignacionVariable* a=(struct AsignacionVariable*)n; {_PH}cp(m,a->nombre); {_PH}ea(a->expresion,v,4096);
+        const char* vt={_PH}tex(a->expresion);
+        if({_PH}find(m)<0){{ {_PH}decl(m,vt); snprintf(b,sizeof(b),"%s %s = %s;",vt,m,v); }}
+        else snprintf(b,sizeof(b),"%s = %s;",m,v);
+        {_PH}emit(b); return;
+    }}
+    if(strcmp(t,"AsignacionCampo")==0){{
+        struct AsignacionCampo* a=(struct AsignacionCampo*)n; {_PH}ea(a->objeto,b,4096); {_PH}cp(m,a->nombre_campo); {_PH}ea(a->expresion,v,4096);
+        snprintf(b2,sizeof(b2),"%s.%s = %s;",b,m,v); {_PH}emit(b2); return;
+    }}
+    if(strcmp(t,"SentenciaRetornar")==0){{
+        struct SentenciaRetornar* r=(struct SentenciaRetornar*)n;
+        if(r->expr){{ {_PH}ea(r->expr,v,4096);
+            if(strcmp(v,"nulo")==0||strcmp(v,"0")==0||strcmp(v,"NULL")==0){{ if({_PH}ret_type[0]&&strcmp({_PH}ret_type,"void")!=0){{ snprintf(b,sizeof(b),"return (%s){{0}};",{_PH}ret_type); }}else snprintf(b,sizeof(b),"return;"); }}
+            else snprintf(b,sizeof(b),"return %s;",v);
+        }}else snprintf(b,sizeof(b),"return;");
+        {_PH}emit(b); return;
+    }}
+    if(strcmp(t,"SentenciaExpr")==0){{ struct SentenciaExpr* e=(struct SentenciaExpr*)n; if(e->expr){{ if(strcmp(e->expr->tipo.datos,"LogLlamada")==0){{ {_PH}v_log((struct LogLlamada*)e->expr); }} else {{ {_PH}ea(e->expr,v,4096); snprintf(b,sizeof(b),"%s;",v); {_PH}emit(b); }} }} return; }}
+    if(strcmp(t,"LogLlamada")==0){{ {_PH}v_log((struct LogLlamada*)n); return; }}
+    if(strcmp(t,"SentenciaRomper")==0){{ {_PH}emit("break;"); return; }}
+    if(strcmp(t,"SentenciaSiguiente")==0){{ {_PH}emit("continue;"); return; }}
+    if(strcmp(t,"SentenciaLanzar")==0){{ struct SentenciaLanzar* l=(struct SentenciaLanzar*)n; {_PH}ea(l->llamada,v,4096); snprintf(b,sizeof(b),"pthread_t _t; pthread_create(&_t,NULL,(void*(*)(void*))%s,NULL); pthread_detach(&_t);",v); {_PH}emit(b); return; }}
+    if(strcmp(t,"SentenciaRecuperar")==0){{ struct SentenciaRecuperar* r=(struct SentenciaRecuperar*)n; {_PH}ea(r->accion_critica,b,4096); {_PH}ea(r->plan_b,v,4096); {_PH}emit("{{"); {_PH}indent++; snprintf(b2,sizeof(b2),"if(%s!=0){{%s;}}",b,v); {_PH}emit(b2); {_PH}indent--; {_PH}emit("}}"); return; }}
+    if(strcmp(t,"SentenciaEscuchar")==0){{ struct SentenciaEscuchar* e=(struct SentenciaEscuchar*)n; {_PH}ea(e->canal,b,4096); {_PH}ea(e->respuesta,v,4096); snprintf(b2,sizeof(b2),"/* escuchar: %s -> %s */",b,v); {_PH}emit(b2); return; }}
+    if(strcmp(t,"DefinicionEstructura")==0){{ {_PH}vest((struct DefinicionEstructura*)n); return; }}
+    if(strcmp(t,"SentenciaImportar")==0){{ struct SentenciaImportar* i=(struct SentenciaImportar*)n; {_PH}cp(b,i->ruta); snprintf(b2,sizeof(b2),"/* importar %s */",b); {_PH}emit(b2); return; }}
+    {_PH}emit("/* ??? */");
+}}
+
+int generar(struct Programa programa, CadenaSegura ruta) {{
+    char sal[1024]; int sl=ruta.longitud;
+    if(sl>4&&ruta.datos[sl-4]=='.'&&(ruta.datos[sl-3]=='s'||ruta.datos[sl-3]=='S')&&(ruta.datos[sl-2]=='y'||ruta.datos[sl-2]=='Y')&&(ruta.datos[sl-1]=='n'||ruta.datos[sl-1]=='N')){{
+        memcpy(sal,ruta.datos,sl-4); sal[sl-4]='.'; sal[sl-3]='c'; sal[sl-2]=0;
+    }}else snprintf(sal,sizeof(sal),"%.*s.c",ruta.longitud,ruta.datos);
+    {_PH}out=fopen(sal,"w"); if(!{_PH}out){{ fprintf(stderr,"Error: no se puede crear %s\\n",sal); return 1; }}
+    fprintf({_PH}out,"// Generado por Synapse (auto-hospedado)\\n");
+    fprintf({_PH}out,"#include <stdio.h>\\n#include <stdlib.h>\\n#include <stdint.h>\\n#include <string.h>\\n#include <pthread.h>\\n");
+    fprintf({_PH}out,"typedef struct {{int longitud;const char* datos;}} CadenaSegura;\\n");
+    fprintf({_PH}out,"typedef struct {{uint32_t filas;uint32_t columnas;float* datos;}} Tensor;\\n");
+    fprintf({_PH}out,"typedef struct {{FILE* stream;int es_valido;}} Canal;\\n");
+    fprintf({_PH}out,"#define nulo 0\\n");
+    fprintf({_PH}out,"static int _g_argc;\\nstatic char** _g_argv;\\nint _argc(){{return _g_argc;}}\\n");
+    fprintf({_PH}out,"CadenaSegura _argv(int i){{if(i<0||i>=_g_argc)return (CadenaSegura){{0,(char*)\\"\\"}};return (CadenaSegura){{.longitud=(int)strlen(_g_argv[i]),.datos=_g_argv[i]}};}}\\n");
+    fprintf({_PH}out,"void salir(int c){{exit(c);}}\\n");
+    fprintf({_PH}out,"CadenaSegura concat(CadenaSegura a,CadenaSegura b){{int _tl=a.longitud+b.longitud;char* _buf=(char*)malloc(_tl+1);memcpy(_buf,a.datos,a.longitud);memcpy(_buf+a.longitud,b.datos,b.longitud);_buf[_tl]=0;CadenaSegura _r={{.longitud=_tl,.datos=_buf}};return _r;}}\\n");
+    // Forward declarations
+    struct ListaNodo* c=programa.sentencias;
+    while(c){{ if(c->cabeza&&strcmp(c->cabeza->tipo.datos,"DefinicionEstructura")==0){{ struct DefinicionEstructura* d=(struct DefinicionEstructura*)c->cabeza; fprintf({_PH}out,"struct %s;\\n",d->nombre.datos); }} c=c->cola; }}
+    {_PH}indent=0; c=programa.sentencias;
+    while(c){{ {_PH}v(c->cabeza); c=c->cola; }}
+    // main()
+    {_PH}emit("int main(int argc, char** argv) {{");
+    {_PH}indent++;
+    {_PH}emit("int _g_argc=argc;");
+    {_PH}emit("char** _g_argv=argv;");
+    {_PH}emit("principal();");
+    {_PH}emit("return 0;");
+    {_PH}indent--;
+    {_PH}emit("}}");
+    fclose({_PH}out);
+    fprintf(stderr,"generar: OK -> %s\\n",sal);
+    return 0;
+}}
+"""
+        H = H.replace(_PH, '_G_')
+        for ln in H.strip().split('\n'):
+            self.lineas.append(ln)
+
+    def _visitar_si(self, nodo: SentenciaSi):
+        cond = self._expr_a_c(nodo.condicion)
+        self._push(f"if ({cond}) {{")
+        self.indent += 1
+        for s in nodo.cuerpo:
+            self._visitar(s)
+        self.indent -= 1
+        if nodo.cuerpo_sino:
+            self._push("} else {")
+            self.indent += 1
+            for s in nodo.cuerpo_sino:
+                self._visitar(s)
+            self.indent -= 1
+        self._push("}")
+
+    def _visitar_estructura(self, nodo: DefinicionEstructura):
+        campos_pointer: set[str] = set()
+        for c in nodo.campos:
+            if c.tipo in self._estructuras or c.tipo == nodo.nombre:
+                campos_pointer.add(c.nombre)
+        self._estructuras[nodo.nombre] = {
+            'campos': [(c.nombre, c.tipo) for c in nodo.campos],
+            'campos_pointer': campos_pointer,
+        }
+        self._push(f"typedef struct {nodo.nombre} {{")
+        self.indent += 1
+        for c in nodo.campos:
+            if c.nombre in campos_pointer:
+                self._push(f"struct {c.tipo}* {c.nombre};")
+            else:
+                tipo_c = MAPA_TIPOS_C.get(c.tipo)
+                if tipo_c is not None:
+                    self._push(f"{tipo_c} {c.nombre};")
+                else:
+                    self._push(f"struct {c.tipo}* {c.nombre};")
+        self.indent -= 1
+        self._push(f"}} {nodo.nombre};")
+        self._push("")
+        self._push(f"static inline struct {nodo.nombre} {nodo.nombre}_nuevo() {{")
+        self.indent += 1
+        self._push(f"struct {nodo.nombre} _r = {{0}};")
+        self._push("return _r;")
+        self.indent -= 1
+        self._push("}")
+        self._push("")
+
+    def _visitar_lanzar(self, nodo: SentenciaLanzar):
+        if not isinstance(nodo.llamada, LlamadaFuncion):
+            return
+        func = nodo.llamada.nombre
+        self._contador_thread += 1
+        var_th = f"thrd_{func}_{self._contador_thread}"
+        self._push(f"pthread_t {var_th};")
+        self._push(f"pthread_create(&{var_th}, NULL, (void* (*)(void*)){func}, NULL);")
+        self._push(f"pthread_detach({var_th});")
+
+    def _visitar_recuperar(self, nodo: SentenciaRecuperar):
+        if nodo.accion_critica is None or nodo.plan_b is None:
+            return
+        accion_str = self._expr_a_c(nodo.accion_critica)
+        plan_str = self._expr_a_c(nodo.plan_b)
+        self._push("{")
+        self.indent += 1
+        self._push(f"int _synapse_rc = {accion_str};")
+        self._push(f"if (_synapse_rc != 0) {{")
+        self.indent += 1
+        self._push(f"{plan_str};")
+        self.indent -= 1
+        self._push("}")
+        self.indent -= 1
+        self._push("}")
+
+    def _visitar_retornar(self, nodo: SentenciaRetornar):
+        if nodo.expr:
+            if nodo.es_transferencia and isinstance(nodo.expr, Identificador):
+                self._tensor_vars_transferidas.add(nodo.expr.nombre)
+            self._push(f"return {self._expr_a_c(nodo.expr)};")
+        else:
+            self._push("return;")
+
+    def _visitar_escuchar(self, nodo: SentenciaEscuchar):
+        self._contador_listener += 1
+        idx = self._contador_listener
+
+        if isinstance(nodo.canal, LiteralCadena):
+            canal_str = nodo.canal.valor
+        else:
+            canal_str = self._expr_a_c(nodo.canal)
+
+        if isinstance(nodo.respuesta, LlamadaFuncion):
+            resp_nombre = nodo.respuesta.nombre
+        else:
+            resp_nombre = "/* error */"
+
+        func_lines = []
+        func_lines.append(f"void* _listener_fn_{idx}(void* arg) {{")
+        func_lines.append("    (void)arg;")
+        func_lines.append(f'    FILE* _fp = fopen("{canal_str}", "r");')
+        func_lines.append("    if (_fp) {")
+        func_lines.append("        char _buf[1024];")
+        func_lines.append("        while (fgets(_buf, sizeof(_buf), _fp)) {")
+        func_lines.append('            _buf[strcspn(_buf, "\\n")] = \'\\0\';')
+        func_lines.append(f'            CadenaSegura _resp_data = {{ .longitud = (int)strlen(_buf), .datos = _buf }};')
+        func_lines.append(f"            {resp_nombre}(_resp_data);")
+        func_lines.append("        }")
+        func_lines.append("        fclose(_fp);")
+        func_lines.append("    }")
+        func_lines.append("    return NULL;")
+        func_lines.append("}")
+        self._listener_funciones.append("\n".join(func_lines))
+
+        self._push(f'pthread_t _listener_pth_{idx};')
+        self._push(f'pthread_create(&_listener_pth_{idx}, NULL, _listener_fn_{idx}, NULL);')
+        self._push(f'pthread_detach(_listener_pth_{idx});')
+
+    def _visitar_asignacion(self, nodo: AsignacionVariable):
+        tipo = self._tipo_de_expr(nodo.expresion)
+        val = self._expr_a_c(nodo.expresion)
+        if nodo.nombre not in self._variables:
+            self._variables[nodo.nombre] = tipo
+            self._push(f"{tipo} {nodo.nombre} = {val};")
+            if tipo == 'Tensor':
+                self._tensor_vars.add(nodo.nombre)
+            elif tipo == 'Canal':
+                self._canal_vars.add(nodo.nombre)
+        else:
+            if nodo.nombre in self._tensor_vars and tipo == 'Tensor':
+                self._push(f"free({nodo.nombre}.datos);")
+            self._push(f"{nodo.nombre} = {val};")
+            if tipo == 'Tensor':
+                self._tensor_vars.add(nodo.nombre)
+            elif tipo == 'Canal':
+                self._canal_vars.add(nodo.nombre)
+        if (isinstance(nodo.expresion, LlamadaFuncion)
+                and nodo.expresion.nombre == 'leer'):
+            self._strings_heap.add(nodo.nombre)
+
+    def _visitar_log(self, nodo: LogLlamada):
+        fmt_parts: List[str] = []
+        printf_args: List[str] = []
+        arg_start = 0
+        separar = False
+        if nodo.argumentos and isinstance(nodo.argumentos[0], LiteralCadena):
+            fmt_parts.append(nodo.argumentos[0].valor)
+            arg_start = 1
+            separar = True
+        for i in range(arg_start, len(nodo.argumentos)):
+            arg = nodo.argumentos[i]
+            tipo = self._tipo_de_expr(arg)
+            esp = " " if separar else ""
+            fmt_parts.append(f"{esp}{self._formato_espec(tipo)}")
+            arg_expr = self._expr_a_c(arg)
+            if tipo == 'CadenaSegura':
+                arg_expr = f'({arg_expr}).datos'
+            printf_args.append(arg_expr)
+            separar = True
+        fmt_str = "".join(fmt_parts) + "\\n"
+        if printf_args:
+            self._push(f'printf("{fmt_str}", {", ".join(printf_args)});')
+        else:
+            self._push(f'printf("{fmt_str}");')
+
+    def _tipo_de_expr(self, nodo: Nodo) -> str:
+        if isinstance(nodo, LiteralCadena):
+            return 'CadenaSegura'
+        if isinstance(nodo, ExprTensor):
+            return 'Tensor'
+        if isinstance(nodo, Identificador):
+            return self._variables.get(nodo.nombre, 'int')
+        if isinstance(nodo, ArgumentoTransferido):
+            return self._tipo_de_expr(nodo.expr)
+        if isinstance(nodo, ExprAccesoCampo):
+            obj_tipo = self._tipo_de_expr(nodo.objeto)
+            if obj_tipo.startswith('struct '):
+                nombre_struct = obj_tipo[7:]
+                info = self._estructuras.get(nombre_struct)
+                if info:
+                    for c_nombre, c_tipo in info.get('campos', []):
+                        if c_nombre == nodo.nombre_campo:
+                            if c_tipo in self._estructuras:
+                                return f'struct {c_tipo}'
+                            return MAPA_TIPOS_C.get(c_tipo, 'int')
+            return 'int'
+        if isinstance(nodo, (OpBinaria, OpUnaria)):
+            return 'int'
+        if isinstance(nodo, LlamadaFuncion):
+            if nodo.nombre in _BUILTINS:
+                return _BUILTINS[nodo.nombre]
+            if nodo.nombre in self._estructuras:
+                return f'struct {nodo.nombre}'
+            return self._variables.get(nodo.nombre, 'int')
+        if isinstance(nodo, AsignacionVariable):
+            return self._tipo_de_expr(nodo.expresion)
+        return 'int'
+
+    def _formato_espec(self, tipo: str) -> str:
+        if tipo == 'Canal':
+            return '%d'
+        if tipo == 'CadenaSegura' or 'char*' in tipo:
+            return '%s'
+        if tipo in ('float', 'double'):
+            return '%f'
+        return '%d'
+
+    def _visitar_mientras(self, nodo: SentenciaMientras):
+        cond = self._expr_a_c(nodo.condicion)
+        self._push(f"while ({cond}) {{")
+        self.indent += 1
+        for s in nodo.cuerpo:
+            self._visitar(s)
+        self.indent -= 1
+        self._push("}")
+
+    def _expr_a_c(self, nodo: Nodo) -> str:
+        if isinstance(nodo, LiteralNumero):
+            return str(nodo.valor)
+        if isinstance(nodo, LiteralCadena):
+            val = nodo.valor
+            return f'(CadenaSegura){{ .longitud = {len(val)}, .datos = "{val}" }}'
+        if isinstance(nodo, Identificador):
+            return "NULL" if nodo.nombre == "nulo" else nodo.nombre
+        if isinstance(nodo, ExprTensor):
+            filas = self._expr_a_c(nodo.filas)
+            cols = self._expr_a_c(nodo.columnas)
+            return f'(Tensor){{ .filas = {filas}, .columnas = {cols}, .datos = (float*)calloc({filas} * {cols}, sizeof(float)) }}'
+        if isinstance(nodo, LlamadaFuncion):
+            if nodo.nombre in self._estructuras and not nodo.argumentos:
+                return f"{nodo.nombre}_nuevo()"
+            args_parts = []
+            for a in nodo.argumentos:
+                if isinstance(a, ArgumentoTransferido):
+                    if isinstance(a.expr, Identificador):
+                        self._tensor_vars_transferidas.add(a.expr.nombre)
+                        if a.expr.nombre in self._canal_vars:
+                            self._canal_vars_cerradas.add(a.expr.nombre)
+                    args_parts.append(self._expr_a_c(a.expr))
+                else:
+                    args_parts.append(self._expr_a_c(a))
+            args = ", ".join(args_parts)
+            return f"{nodo.nombre}({args})"
+        if isinstance(nodo, ArgumentoTransferido):
+            return self._expr_a_c(nodo.expr)
+        if isinstance(nodo, ExprAccesoCampo):
+            obj = self._expr_a_c(nodo.objeto)
+            obj_tipo = self._tipo_de_expr(nodo.objeto)
+            es_puntero = False
+            if obj_tipo.startswith('struct '):
+                nombre_struct = obj_tipo[7:]
+                info = self._estructuras.get(nombre_struct)
+                if info and nodo.nombre_campo in info.get('campos_pointer', set()):
+                    es_puntero = True
+            sep = '->' if es_puntero else '.'
+            return f"{obj}{sep}{nodo.nombre_campo}"
+        if isinstance(nodo, OpBinaria):
+            izq = self._expr_a_c(nodo.izquierdo)
+            der = self._expr_a_c(nodo.derecho)
+            return f"({izq} {nodo.operador} {der})"
+        if isinstance(nodo, OpUnaria):
+            return f"({nodo.operador}{self._expr_a_c(nodo.expr)})"
+        return "/* error en traduccion */"

@@ -1,0 +1,80 @@
+{
+  "synapse": "2.0",
+  "ast": {
+    "_tipo": "Programa",
+    "sentencias": [
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "sumar",
+        "parametros": [
+          {
+            "nombre": "a",
+            "tipo": "int"
+          },
+          {
+            "nombre": "b",
+            "tipo": "int"
+          }
+        ],
+        "tipo_retorno": "int",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
+            "expr": {
+              "_tipo": "OpBinaria",
+              "izquierdo": {
+                "_tipo": "Identificador",
+                "nombre": "a"
+              },
+              "operador": "+",
+              "derecho": {
+                "_tipo": "Identificador",
+                "nombre": "b"
+              }
+            },
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "principal",
+        "parametros": [],
+        "tipo_retorno": "nulo",
+        "cuerpo": [
+          {
+            "_tipo": "AsignacionVariable",
+            "nombre": "resultado",
+            "expresion": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "sumar",
+              "argumentos": [
+                {
+                  "_tipo": "LiteralNumero",
+                  "valor": 50
+                },
+                {
+                  "_tipo": "LiteralNumero",
+                  "valor": 25
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "LogLlamada",
+            "argumentos": [
+              {
+                "_tipo": "LiteralCadena",
+                "valor": "Fusión de módulos exitosa. El resultado del cálculo externo es: "
+              },
+              {
+                "_tipo": "Identificador",
+                "nombre": "resultado"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

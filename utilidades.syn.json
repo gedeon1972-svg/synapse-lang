@@ -1,0 +1,25 @@
+{
+  "synapse": "2.0",
+  "ast": {
+    "_tipo": "Programa",
+    "sentencias": [
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "saludar",
+        "parametros": [],
+        "tipo_retorno": "nulo",
+        "cuerpo": [
+          {
+            "_tipo": "LogLlamada",
+            "argumentos": [
+              {
+                "_tipo": "LiteralCadena",
+                "valor": "Hola desde utilidades!"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

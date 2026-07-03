@@ -1,0 +1,5 @@
+#lang: es
+// Libreria de operaciones matematicas
+
+funcion sumar(a: int, b: int) -> int:
+    retornar a + b

@@ -1,0 +1,18 @@
+#lang: es
+// std.io — Entrada/Salida estándar (consola)
+// Integrante de la Biblioteca Estandar de Synapse.
+//
+// Uso desde Synapse:
+//   importar std.io
+//   escribir("hola")
+//   escribir_linea("mundo")
+//   entrada = leer_linea()
+
+funcion escribir(texto: texto) -> nulo:
+    retornar
+
+funcion escribir_linea(texto: texto) -> nulo:
+    retornar
+
+funcion leer_linea() -> texto:
+    retornar ""

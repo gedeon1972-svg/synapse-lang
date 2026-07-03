@@ -1,0 +1,8 @@
+#lang: es
+// parser.syn — Analizador sintactico
+// Retorna un AST (Programa) a partir del texto fuente.
+
+importar compiler.ast_nodes
+
+funcion parsear(fuente: texto) -> Programa:
+    retornar nulo

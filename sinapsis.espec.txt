@@ -1,0 +1,30 @@
+[ESPECIFICACION: SYNAPSE V2.0 - ARQUITECTURA POLIGLOTA]
+
+PRINCIPIO:
+Synapse es un AST Universal. Las keywords en espanol, ingles, etc.
+son solo capas de interfaz. El formato de almacenamiento canonico (.syn.json)
+NO contiene palabras de ningun idioma.
+
+FORMATO DE ARCHIVO:
+- Texto editable (.syn): primera linea #lang: <codigo> (es, en, etc.)
+- Canonico (.syn.json): AST serializado en JSON, libre de idioma
+- Ambos formatos producen el MISMO AST universal
+
+DICCIONARIOS DISPONIBLES:
+  es -> si, sino, funcion, retornar, lanzar, recuperar, escuchar, mientras, importar
+  en -> if, else, function, return, spawn, recover, listen, while, import
+
+FLUJO:
+  .syn (texto, cualquier idioma) -> Lexer (con diccionario) -> tokens universales
+  .syn.json (canonico) -> deserializar -> AST universal
+  AST universal -> GeneradorC -> C compilable (SIN saber el idioma original)
+
+MODULARIDAD:
+- importar resuelve archivos .syn (texto) con su propio #lang:
+- La resolucion es recursiva con proteccion contra ciclos
+- El AST fusionado es independiente del idioma de cada modulo
+
+COMANDOS:
+  python compilador.py archivo.syn         -> genera C + canónico
+  python compilador.py archivo.syn.json    -> genera C desde canónico
+  python compilador.py archivo.syn --lang en -> genera C + canónico + texto en inglés

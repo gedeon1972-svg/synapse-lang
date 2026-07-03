@@ -1,0 +1,11 @@
+# Ocultar basura de Python
+__pycache__/
+*.pyc
+
+# Ocultar binarios compilados locales
+*.exe
+*.o
+*.out
+
+# Ocultar carpetas temporales
+temp_test*/
