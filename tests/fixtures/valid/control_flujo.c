@@ -33,8 +33,6 @@ extern Tensor reserva(int tamano);
 extern void libera(Tensor bloque);
 extern Tensor suma(Tensor a, Tensor b);
 extern Tensor producto(Tensor a, Tensor b);
-extern int texto_a_entero(CadenaSegura str);
-extern float texto_a_decimal(CadenaSegura str);
 
 static int _g_argc;
 static char** _g_argv;
@@ -58,20 +56,17 @@ CadenaSegura concat(CadenaSegura a, CadenaSegura b) {
     return _r;
 }
 
-Tensor generar_tensor(void) {
-    Tensor datos = (Tensor){ .filas = 2, .columnas = 2, .datos = (float*)calloc(2 * 2, sizeof(float)) };
-    return datos;
-}
-
-void principal(void) {
-    int matriz = generar_tensor();
-    printf("Tensor recibido y memoria gestionada correctamente.\n");
+void test(int x) {
+    if ((x > 0)) {
+        printf("pos\n");
+    } else {
+        printf("neg\n");
+    }
 }
 
 int main(int argc, char** argv) {
     _g_argc = argc;
     _g_argv = argv;
     pool_init(POOL_BLOQUES, TAMANO_BLOQUE);
-    principal();
     return 0;
 }

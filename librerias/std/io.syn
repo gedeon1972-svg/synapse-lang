@@ -8,6 +8,15 @@
 //   escribir_linea("mundo")
 //   entrada = leer_linea()
 
+funcion abrir(ruta: texto, modo: texto) -> Canal:
+    retornar 0
+
+funcion leer(canal: Canal) -> texto:
+    retornar ""
+
+funcion cerrar(-> canal: Canal) -> nulo:
+    retornar
+
 funcion escribir(texto: texto) -> nulo:
     retornar
 

@@ -8,6 +8,7 @@ files = {
     "LIB_GENERATOR": "librerias/compiler/generator.syn",
     "LIB_IO": "librerias/std/io.syn",
     "LIB_MEM": "librerias/std/mem.syn",
+    "LIB_MATH": "librerias/std/math.syn",
 }
 
 header_path = os.path.join("librerias", "embedded_libs.h")

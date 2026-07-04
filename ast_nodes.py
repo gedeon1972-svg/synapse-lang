@@ -17,9 +17,15 @@ class TokenID(Enum):
     BREAK = auto()
     CONTINUE = auto()
     DOT = auto()
+    AND = auto()
+    OR = auto()
+    NOT = auto()
+    TRUE = auto()
+    FALSE = auto()
 
     IDENTIFIER = auto()
     NUMBER = auto()
+    FLOAT = auto()
     STRING = auto()
 
     GREATER = auto()
@@ -159,6 +165,11 @@ class Identificador(Nodo):
 @dataclass
 class LiteralNumero(Nodo):
     valor: int = 0
+
+
+@dataclass
+class LiteralDecimal(Nodo):
+    valor: float = 0.0
 
 
 @dataclass

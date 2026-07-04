@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <pthread.h>
 #include "librerias/embedded_libs.h"
 
 // --- Type definitions (deben coincidir exactamente con las emitidas por el generador) ---
@@ -25,8 +26,10 @@ typedef struct {
 } MemoryPool;
 
 static MemoryPool _g_pool;
+static pthread_mutex_t _g_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void pool_init(uint32_t total_blocks, uint32_t block_size) {
+    pthread_mutex_lock(&_g_pool_mutex);
     _g_pool.total_blocks = total_blocks;
     _g_pool.block_size = block_size;
     _g_pool.pool_base = (uint8_t*)malloc(total_blocks * block_size);
@@ -34,11 +37,14 @@ void pool_init(uint32_t total_blocks, uint32_t block_size) {
     _g_pool.bitmap = (uint32_t*)calloc(_words, sizeof(uint32_t));
     if (!_g_pool.pool_base || !_g_pool.bitmap) {
         fprintf(stderr, "ESCAPA_DEL_ALCANCE: pool_init fallo\n");
+        pthread_mutex_unlock(&_g_pool_mutex);
         exit(1);
     }
+    pthread_mutex_unlock(&_g_pool_mutex);
 }
 
 void* pool_alloc() {
+    pthread_mutex_lock(&_g_pool_mutex);
     uint32_t _words = (_g_pool.total_blocks + 31) / 32;
     for (uint32_t _w = 0; _w < _words; _w++) {
         if (_g_pool.bitmap[_w] != 0xFFFFFFFF) {
@@ -48,13 +54,16 @@ void* pool_alloc() {
             uint32_t _index = _w * 32 + _b;
             if (_index >= _g_pool.total_blocks) break;
             _g_pool.bitmap[_w] |= (1u << _b);
+            pthread_mutex_unlock(&_g_pool_mutex);
             return _g_pool.pool_base + _index * _g_pool.block_size;
         }
     }
+    pthread_mutex_unlock(&_g_pool_mutex);
     return NULL;
 }
 
 void pool_free(void* ptr) {
+    pthread_mutex_lock(&_g_pool_mutex);
     if (ptr >= (void*)_g_pool.pool_base
         && ptr < (void*)(_g_pool.pool_base + _g_pool.total_blocks * _g_pool.block_size)) {
         uint32_t _index = (uint32_t)((uint8_t*)ptr - _g_pool.pool_base) / _g_pool.block_size;
@@ -64,6 +73,7 @@ void pool_free(void* ptr) {
     } else {
         free(ptr);
     }
+    pthread_mutex_unlock(&_g_pool_mutex);
 }
 
 static inline float* _pool_malloc(size_t tamano) {
@@ -233,4 +243,33 @@ void libera(Tensor bloque) {
     if (bloque.datos) {
         pool_free(bloque.datos);
     }
+}
+
+// --- std.conv ---
+int texto_a_entero(CadenaSegura str) {
+    if (str.datos == NULL || str.longitud == 0) return 0;
+    return (int)strtol(str.datos, NULL, 10);
+}
+
+float texto_a_decimal(CadenaSegura str) {
+    if (str.datos == NULL || str.longitud == 0) return 0.0f;
+    return (float)strtod(str.datos, NULL);
+}
+
+CadenaSegura decimal_a_texto(float n) {
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%f", n);
+    char* data = (char*)malloc(len + 1);
+    if (!data) { fprintf(stderr, "ESCAPA_DEL_ALCANCE: malloc fallo en decimal_a_texto\n"); exit(1); }
+    memcpy(data, buf, len + 1);
+    return (CadenaSegura){ .longitud = len, .datos = data };
+}
+
+CadenaSegura entero_a_texto(int n) {
+    char buf[64];
+    int len = snprintf(buf, sizeof(buf), "%d", n);
+    char* data = (char*)malloc(len + 1);
+    if (!data) { fprintf(stderr, "ESCAPA_DEL_ALCANCE: malloc fallo en entero_a_texto\n"); exit(1); }
+    memcpy(data, buf, len + 1);
+    return (CadenaSegura){ .longitud = len, .datos = data };
 }

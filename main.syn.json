@@ -716,14 +716,27 @@
       },
       {
         "_tipo": "DefinicionFuncion",
-        "nombre": "escribir",
+        "nombre": "cerrar",
         "parametros": [
           {
             "nombre": "canal",
             "tipo": "Canal"
-          },
+          }
+        ],
+        "tipo_retorno": "nulo",
+        "cuerpo": [
           {
-            "nombre": "contenido",
+            "_tipo": "SentenciaRetornar",
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "escribir",
+        "parametros": [
+          {
+            "nombre": "texto",
             "tipo": "texto"
           }
         ],
@@ -737,17 +750,33 @@
       },
       {
         "_tipo": "DefinicionFuncion",
-        "nombre": "cerrar",
+        "nombre": "escribir_linea",
         "parametros": [
           {
-            "nombre": "canal",
-            "tipo": "Canal"
+            "nombre": "texto",
+            "tipo": "texto"
           }
         ],
         "tipo_retorno": "nulo",
         "cuerpo": [
           {
             "_tipo": "SentenciaRetornar",
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "leer_linea",
+        "parametros": [],
+        "tipo_retorno": "texto",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
+            "expr": {
+              "_tipo": "LiteralCadena",
+              "valor": ""
+            },
             "es_transferencia": false
           }
         ]
@@ -1013,6 +1042,96 @@
               "nombre": "abrir",
               "argumentos": [
                 {
+                  "_tipo": "LiteralCadena",
+                  "valor": "librerias/std/math.syn"
+                },
+                {
+                  "_tipo": "LiteralCadena",
+                  "valor": "r"
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "AsignacionVariable",
+            "nombre": "lib_math",
+            "expresion": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "leer",
+              "argumentos": [
+                {
+                  "_tipo": "Identificador",
+                  "nombre": "canal"
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "SentenciaExpr",
+            "expr": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "cerrar",
+              "argumentos": [
+                {
+                  "_tipo": "Identificador",
+                  "nombre": "canal"
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "AsignacionVariable",
+            "nombre": "canal",
+            "expresion": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "abrir",
+              "argumentos": [
+                {
+                  "_tipo": "LiteralCadena",
+                  "valor": "librerias/std/mem.syn"
+                },
+                {
+                  "_tipo": "LiteralCadena",
+                  "valor": "r"
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "AsignacionVariable",
+            "nombre": "lib_mem",
+            "expresion": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "leer",
+              "argumentos": [
+                {
+                  "_tipo": "Identificador",
+                  "nombre": "canal"
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "SentenciaExpr",
+            "expr": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "cerrar",
+              "argumentos": [
+                {
+                  "_tipo": "Identificador",
+                  "nombre": "canal"
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "AsignacionVariable",
+            "nombre": "canal",
+            "expresion": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "abrir",
+              "argumentos": [
+                {
                   "_tipo": "Identificador",
                   "nombre": "ruta"
                 },
@@ -1070,24 +1189,44 @@
                           "nombre": "concat",
                           "argumentos": [
                             {
-                              "_tipo": "Identificador",
-                              "nombre": "lib_ast"
+                              "_tipo": "LlamadaFuncion",
+                              "nombre": "concat",
+                              "argumentos": [
+                                {
+                                  "_tipo": "LlamadaFuncion",
+                                  "nombre": "concat",
+                                  "argumentos": [
+                                    {
+                                      "_tipo": "Identificador",
+                                      "nombre": "lib_ast"
+                                    },
+                                    {
+                                      "_tipo": "Identificador",
+                                      "nombre": "lib_parse"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "_tipo": "Identificador",
+                                  "nombre": "lib_gen"
+                                }
+                              ]
                             },
                             {
                               "_tipo": "Identificador",
-                              "nombre": "lib_parse"
+                              "nombre": "lib_io"
                             }
                           ]
                         },
                         {
                           "_tipo": "Identificador",
-                          "nombre": "lib_gen"
+                          "nombre": "lib_math"
                         }
                       ]
                     },
                     {
                       "_tipo": "Identificador",
-                      "nombre": "lib_io"
+                      "nombre": "lib_mem"
                     }
                   ]
                 },

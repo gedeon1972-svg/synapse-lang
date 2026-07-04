@@ -58,14 +58,14 @@ CadenaSegura concat(CadenaSegura a, CadenaSegura b) {
     return _r;
 }
 
-Tensor generar_tensor(void) {
-    Tensor datos = (Tensor){ .filas = 2, .columnas = 2, .datos = (float*)calloc(2 * 2, sizeof(float)) };
-    return datos;
-}
-
 void principal(void) {
-    int matriz = generar_tensor();
-    printf("Tensor recibido y memoria gestionada correctamente.\n");
+    Canal archivo = abrir((CadenaSegura){ .longitud = 11, .datos = "test_io.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
+    CadenaSegura contenido = leer(archivo);
+    printf("archivo leido:\n");
+    printf("%s\n", (contenido).datos);
+    cerrar(archivo);
+    printf("archivo cerrado\n");
+    free((void*)contenido.datos);
 }
 
 int main(int argc, char** argv) {

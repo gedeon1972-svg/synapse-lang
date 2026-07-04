@@ -5,6 +5,69 @@
     "sentencias": [
       {
         "_tipo": "DefinicionFuncion",
+        "nombre": "abrir",
+        "parametros": [
+          {
+            "nombre": "ruta",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "modo",
+            "tipo": "texto"
+          }
+        ],
+        "tipo_retorno": "Canal",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
+            "expr": {
+              "_tipo": "LiteralNumero",
+              "valor": 0
+            },
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "leer",
+        "parametros": [
+          {
+            "nombre": "canal",
+            "tipo": "Canal"
+          }
+        ],
+        "tipo_retorno": "texto",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
+            "expr": {
+              "_tipo": "LiteralCadena",
+              "valor": ""
+            },
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "cerrar",
+        "parametros": [
+          {
+            "nombre": "canal",
+            "tipo": "Canal"
+          }
+        ],
+        "tipo_retorno": "nulo",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
         "nombre": "escribir",
         "parametros": [
           {

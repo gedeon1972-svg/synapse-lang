@@ -8,7 +8,7 @@ from ast_nodes import (
     AsignacionVariable, SentenciaRecuperar, LogLlamada, SentenciaExpr,
     SentenciaRomper, SentenciaSiguiente,
     OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
-    LiteralNumero, LiteralCadena, ExprTensor, ArgumentoTransferido,
+    LiteralNumero, LiteralDecimal, LiteralCadena, ExprTensor, ArgumentoTransferido,
 )
 from lexer import OPERADORES_BINARIOS
 from diagnostics import DiagnosticManager, ErrorCodes
@@ -321,7 +321,22 @@ class Parser:
             return SentenciaExpr(expr=expr, linea=expr.linea, columna=expr.columna)
 
     def _parsear_expresion(self) -> Nodo:
-        return self._parsear_comparacion()
+        return self._parsear_logica()
+
+    def _parsear_logica(self) -> Nodo:
+        izquierdo = self._parsear_comparacion()
+        ops = {TokenID.AND, TokenID.OR}
+        while self._mirar().tipo in ops:
+            tok_op = self._avanzar()
+            derecho = self._parsear_comparacion()
+            izquierdo = OpBinaria(
+                izquierdo=izquierdo,
+                operador=OPERADORES_BINARIOS[tok_op.tipo],
+                derecho=derecho,
+                linea=izquierdo.linea,
+                columna=izquierdo.columna,
+            )
+        return izquierdo
 
     def _parsear_comparacion(self) -> Nodo:
         izquierdo = self._parsear_adicion()
@@ -380,6 +395,15 @@ class Parser:
                 linea=t.linea,
                 columna=t.columna,
             )
+        if t.tipo == TokenID.NOT:
+            self._avanzar()
+            expr = self._parsear_unario()
+            return OpUnaria(
+                operador='!',
+                expr=expr,
+                linea=t.linea,
+                columna=t.columna,
+            )
         return self._parsear_primario()
 
     def _parsear_primario(self) -> Nodo:
@@ -387,9 +411,18 @@ class Parser:
         if t.tipo == TokenID.NUMBER:
             self._avanzar()
             return LiteralNumero(valor=t.valor, linea=t.linea, columna=t.columna)
+        if t.tipo == TokenID.FLOAT:
+            self._avanzar()
+            return LiteralDecimal(valor=t.valor, linea=t.linea, columna=t.columna)
         if t.tipo == TokenID.STRING:
             self._avanzar()
             return LiteralCadena(valor=t.valor, linea=t.linea, columna=t.columna)
+        if t.tipo == TokenID.TRUE:
+            self._avanzar()
+            return LiteralNumero(valor=1, linea=t.linea, columna=t.columna)
+        if t.tipo == TokenID.FALSE:
+            self._avanzar()
+            return LiteralNumero(valor=0, linea=t.linea, columna=t.columna)
         if t.tipo == TokenID.IDENTIFIER:
             self._avanzar()
             if self._mirar().tipo == TokenID.LPAREN:
@@ -524,9 +557,13 @@ class Parser:
 
     def _parsear_bloque(self) -> Optional[List[Nodo]]:
         if self._esperar(TokenID.NEWLINE) is None:
+            self.diag.reportar(ErrorCodes.ERR_SYNTAX_EXPECTED_TOKEN, self._mirar(),
+                               esperado='NEWLINE', encontrado=self._mirar().tipo.name)
             self._sincronizar(_SYNC_BLOCK)
             return None
         if self._esperar(TokenID.INDENT) is None:
+            self.diag.reportar(ErrorCodes.ERR_SYNTAX_EXPECTED_TOKEN, self._mirar(),
+                               esperado='INDENT', encontrado=self._mirar().tipo.name)
             self._sincronizar(_SYNC_BLOCK)
             return None
         stmts: List[Nodo] = []
@@ -537,5 +574,10 @@ class Parser:
             else:
                 self._avanzar()
         if self._mirar().tipo != TokenID.EOF:
-            self._esperar(TokenID.DEDENT)
+            token_dedent = self._mirar()
+            dedent_ok = self._posible(TokenID.DEDENT)
+            if not dedent_ok:
+                self.diag.reportar(ErrorCodes.ERR_SYNTAX_EXPECTED_TOKEN, token_dedent,
+                                   esperado='DEDENT', encontrado=token_dedent.tipo.name)
+                self._sincronizar(_SYNC_BLOCK)
         return stmts

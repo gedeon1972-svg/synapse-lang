@@ -8,7 +8,7 @@ from ast_nodes import (
     SentenciaMientras, SentenciaRomper, SentenciaSiguiente,
     SentenciaImportar, AsignacionVariable, SentenciaExpr, LogLlamada,
     OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
-    LiteralNumero, LiteralCadena, ExprTensor, ArgumentoTransferido,
+    LiteralNumero, LiteralDecimal, LiteralCadena, ExprTensor, ArgumentoTransferido,
     Token, TokenID,
 )
 from diagnostics import DiagnosticManager, ErrorCodes
@@ -38,6 +38,9 @@ _FUNCIONES_BUILTIN: Dict[str, Tuple[List[str], str]] = {
     '_argv': (['int'], 'texto'),
     'salir': (['int'], 'nulo'),
     'concat': (['texto', 'texto'], 'texto'),
+    'texto_a_entero': (['texto'], 'int'),
+    'texto_a_decimal': (['texto'], 'decimal'),
+    'decimal_a_texto': (['decimal'], 'texto'),
 }
 
 
@@ -128,7 +131,7 @@ class AnalizadorSemantico:
                             )
         elif isinstance(nodo, SentenciaSi):
             tipo_cond = self._inferir_tipo(nodo.condicion)
-            if tipo_cond and _tipo_normalizado(tipo_cond) != 'int':
+            if tipo_cond and _tipo_normalizado(tipo_cond) not in ('int', 'float'):
                 self.diag.reportar(
                     ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
                     self._token(nodo.linea, nodo.columna),
@@ -145,7 +148,7 @@ class AnalizadorSemantico:
                 self.tabla.salir_scope()
         elif isinstance(nodo, SentenciaMientras):
             tipo_cond = self._inferir_tipo(nodo.condicion)
-            if tipo_cond and _tipo_normalizado(tipo_cond) != 'int':
+            if tipo_cond and _tipo_normalizado(tipo_cond) not in ('int', 'float'):
                 self.diag.reportar(
                     ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
                     self._token(nodo.linea, nodo.columna),
@@ -189,6 +192,8 @@ class AnalizadorSemantico:
     def _inferir_tipo(self, nodo: Nodo) -> Optional[str]:
         if isinstance(nodo, LiteralNumero):
             return 'int'
+        elif isinstance(nodo, LiteralDecimal):
+            return 'decimal'
         elif isinstance(nodo, LiteralCadena):
             return 'texto'
         elif isinstance(nodo, Identificador):
@@ -207,6 +212,33 @@ class AnalizadorSemantico:
             if tipo_izq and tipo_der:
                 norm_izq = _tipo_normalizado(tipo_izq)
                 norm_der = _tipo_normalizado(tipo_der)
+                
+                # Operadores lógicos (&&, ||)
+                if nodo.operador in ('&&', '||'):
+                    # Ambos operandos deben ser tipos que pueden evaluarse como booleanos
+                    if norm_izq not in ('int', 'float'):
+                        self.diag.reportar(
+                            ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
+                            self._token(nodo.linea, nodo.columna),
+                            tipo1=tipo_izq, tipo2='int/float', operacion=nodo.operador
+                        )
+                        return None
+                    if norm_der not in ('int', 'float'):
+                        self.diag.reportar(
+                            ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
+                            self._token(nodo.linea, nodo.columna),
+                            tipo1=tipo_der, tipo2='int/float', operacion=nodo.operador
+                        )
+                        return None
+                    return 'int'  # Resultado es int (0 o 1)
+                
+                # Operadores aritméticos y comparación
+                if norm_izq == 'float' and norm_der == 'int':
+                    return 'decimal'
+                if norm_izq == 'int' and norm_der == 'float':
+                    return 'decimal'
+                if norm_izq == 'float' and norm_der == 'float':
+                    return 'decimal'
                 if norm_izq != norm_der:
                     self.diag.reportar(
                         ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
@@ -214,24 +246,29 @@ class AnalizadorSemantico:
                         tipo1=tipo_izq, tipo2=tipo_der, operacion=nodo.operador
                     )
                     return None
-                if norm_izq != 'int':
+                if norm_izq not in ('int', 'float'):
                     self.diag.reportar(
                         ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
                         self._token(nodo.linea, nodo.columna),
                         tipo1=tipo_izq, tipo2='int', operacion=nodo.operador
                     )
                     return None
+            if norm_izq == 'float' or norm_der == 'float':
+                return 'decimal'
             return 'int'
         elif isinstance(nodo, OpUnaria):
             tipo_expr = self._inferir_tipo(nodo.expr)
-            if tipo_expr and _tipo_normalizado(tipo_expr) != 'int':
+            if tipo_expr and _tipo_normalizado(tipo_expr) not in ('int', 'float'):
                 self.diag.reportar(
                     ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
                     self._token(nodo.linea, nodo.columna),
                     tipo1=tipo_expr, tipo2='int', operacion=nodo.operador
                 )
                 return None
-            return 'int'
+            # Operador NOT (!) siempre retorna int
+            if nodo.operador == '!':
+                return 'int'
+            return 'decimal' if (tipo_expr and _tipo_normalizado(tipo_expr) == 'float') else 'int'
         elif isinstance(nodo, LlamadaFuncion):
             return self._inferir_tipo_llamada(nodo)
         elif isinstance(nodo, ExprTensor):
@@ -295,6 +332,10 @@ class AnalizadorSemantico:
             for i, (arg, esperado) in enumerate(zip(nodo.argumentos, tipos_esperados)):
                 tipo_arg = self._inferir_tipo(arg)
                 if tipo_arg and _tipo_normalizado(tipo_arg) != _tipo_normalizado(esperado):
+                    if tipo_arg == 'decimal' and esperado == 'texto':
+                        continue  # coercion implicita float -> texto
+                    if tipo_arg == 'int' and esperado == 'texto':
+                        continue  # coercion implicita int -> texto
                     self.diag.reportar(
                         ErrorCodes.ERR_SEM_TIPO_INCOMPATIBLE,
                         self._token(getattr(arg, 'linea', 0), getattr(arg, 'columna', 0)),

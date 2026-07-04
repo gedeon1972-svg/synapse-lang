@@ -12,7 +12,7 @@ from ast_nodes import (
     SentenciaRomper, SentenciaSiguiente,
     SentenciaExpr, AsignacionVariable, LogLlamada, SentenciaImportar,
     OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
-    LiteralNumero, LiteralCadena, ExprTensor, ArgumentoTransferido,
+    LiteralNumero, LiteralDecimal, LiteralCadena, ExprTensor, ArgumentoTransferido,
 )
 from lexer import Lexer, DICCIONARIOS, DICCIONARIOS_INVERSO
 from parser import Parser

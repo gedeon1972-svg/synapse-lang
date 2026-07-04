@@ -8,4 +8,4 @@ __pycache__/
 *.out
 
 # Ocultar carpetas temporales
-temp_test*/
+temp_test*/    

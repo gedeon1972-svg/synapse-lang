@@ -51,6 +51,27 @@
       },
       {
         "_tipo": "DefinicionFuncion",
+        "nombre": "escribir",
+        "parametros": [
+          {
+            "nombre": "canal",
+            "tipo": "Canal"
+          },
+          {
+            "nombre": "contenido",
+            "tipo": "texto"
+          }
+        ],
+        "tipo_retorno": "nulo",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
         "nombre": "cerrar",
         "parametros": [
           {
@@ -68,50 +89,38 @@
       },
       {
         "_tipo": "DefinicionFuncion",
-        "nombre": "escribir",
+        "nombre": "reserva",
         "parametros": [
           {
-            "nombre": "texto",
-            "tipo": "texto"
+            "nombre": "tamano",
+            "tipo": "int"
           }
         ],
-        "tipo_retorno": "nulo",
-        "cuerpo": [
-          {
-            "_tipo": "SentenciaRetornar",
-            "es_transferencia": false
-          }
-        ]
-      },
-      {
-        "_tipo": "DefinicionFuncion",
-        "nombre": "escribir_linea",
-        "parametros": [
-          {
-            "nombre": "texto",
-            "tipo": "texto"
-          }
-        ],
-        "tipo_retorno": "nulo",
-        "cuerpo": [
-          {
-            "_tipo": "SentenciaRetornar",
-            "es_transferencia": false
-          }
-        ]
-      },
-      {
-        "_tipo": "DefinicionFuncion",
-        "nombre": "leer_linea",
-        "parametros": [],
-        "tipo_retorno": "texto",
+        "tipo_retorno": "tensor",
         "cuerpo": [
           {
             "_tipo": "SentenciaRetornar",
             "expr": {
-              "_tipo": "LiteralCadena",
-              "valor": ""
+              "_tipo": "LiteralNumero",
+              "valor": 0
             },
+            "es_transferencia": false
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionFuncion",
+        "nombre": "libera",
+        "parametros": [
+          {
+            "nombre": "bloque",
+            "tipo": "tensor"
+          }
+        ],
+        "tipo_retorno": "nulo",
+        "cuerpo": [
+          {
+            "_tipo": "SentenciaRetornar",
             "es_transferencia": false
           }
         ]
@@ -124,14 +133,14 @@
         "cuerpo": [
           {
             "_tipo": "AsignacionVariable",
-            "nombre": "f",
+            "nombre": "archivo",
             "expresion": {
               "_tipo": "LlamadaFuncion",
               "nombre": "abrir",
               "argumentos": [
                 {
                   "_tipo": "LiteralCadena",
-                  "valor": "datos.txt"
+                  "valor": "test_io.syn"
                 },
                 {
                   "_tipo": "LiteralCadena",
@@ -141,11 +150,59 @@
             }
           },
           {
+            "_tipo": "AsignacionVariable",
+            "nombre": "contenido",
+            "expresion": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "leer",
+              "argumentos": [
+                {
+                  "_tipo": "Identificador",
+                  "nombre": "archivo"
+                }
+              ]
+            }
+          },
+          {
             "_tipo": "LogLlamada",
             "argumentos": [
               {
                 "_tipo": "LiteralCadena",
-                "valor": "abri pero no cierre"
+                "valor": "archivo leido:"
+              }
+            ]
+          },
+          {
+            "_tipo": "LogLlamada",
+            "argumentos": [
+              {
+                "_tipo": "Identificador",
+                "nombre": "contenido"
+              }
+            ]
+          },
+          {
+            "_tipo": "SentenciaExpr",
+            "expr": {
+              "_tipo": "LlamadaFuncion",
+              "nombre": "cerrar",
+              "argumentos": [
+                {
+                  "_tipo": "ArgumentoTransferido",
+                  "expr": {
+                    "_tipo": "Identificador",
+                    "nombre": "archivo"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "_tipo": "LogLlamada",
+            "argumentos": [
+              {
+                "_tipo": "LiteralCadena",
+                "valor": "archivo cerrado"
               }
             ]
           }
