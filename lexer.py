@@ -16,6 +16,11 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'siguiente': TokenID.CONTINUE,
         'importar': TokenID.IMPORT,
         'estructura': TokenID.STRUCT,
+        'y': TokenID.AND,
+        'o': TokenID.OR,
+        'no': TokenID.NOT,
+        'verdadero': TokenID.TRUE,
+        'falso': TokenID.FALSE,
     },
     'en': {
         'if': TokenID.IF,
@@ -30,6 +35,87 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'continue': TokenID.CONTINUE,
         'import': TokenID.IMPORT,
         'struct': TokenID.STRUCT,
+        'and': TokenID.AND,
+        'or': TokenID.OR,
+        'not': TokenID.NOT,
+        'true': TokenID.TRUE,
+        'false': TokenID.FALSE,
+    },
+    'fr': {
+        'si': TokenID.IF,
+        'sinon': TokenID.ELSE,
+        'fonction': TokenID.FUNCTION,
+        'retourner': TokenID.RETURN,
+        'lancer': TokenID.SPAWN,
+        'recuperer': TokenID.RECOVER,
+        'ecouter': TokenID.LISTEN,
+        'tantque': TokenID.WHILE,
+        'rompre': TokenID.BREAK,
+        'continuer': TokenID.CONTINUE,
+        'importer': TokenID.IMPORT,
+        'structure': TokenID.STRUCT,
+        'et': TokenID.AND,
+        'ou': TokenID.OR,
+        'non': TokenID.NOT,
+        'vrai': TokenID.TRUE,
+        'faux': TokenID.FALSE,
+    },
+    'pt': {
+        'se': TokenID.IF,
+        'senao': TokenID.ELSE,
+        'funcao': TokenID.FUNCTION,
+        'retornar': TokenID.RETURN,
+        'lancar': TokenID.SPAWN,
+        'recuperar': TokenID.RECOVER,
+        'escutar': TokenID.LISTEN,
+        'enquanto': TokenID.WHILE,
+        'parar': TokenID.BREAK,
+        'continuar': TokenID.CONTINUE,
+        'importar': TokenID.IMPORT,
+        'estrutura': TokenID.STRUCT,
+        'e': TokenID.AND,
+        'ou': TokenID.OR,
+        'nao': TokenID.NOT,
+        'verdadeiro': TokenID.TRUE,
+        'falso': TokenID.FALSE,
+    },
+    'de': {
+        'wenn': TokenID.IF,
+        'sonst': TokenID.ELSE,
+        'funktion': TokenID.FUNCTION,
+        'rueckgabe': TokenID.RETURN,
+        'starten': TokenID.SPAWN,
+        'wiederherstellen': TokenID.RECOVER,
+        'hoeren': TokenID.LISTEN,
+        'waehrend': TokenID.WHILE,
+        'abbrechen': TokenID.BREAK,
+        'fortsetzen': TokenID.CONTINUE,
+        'importieren': TokenID.IMPORT,
+        'struktur': TokenID.STRUCT,
+        'und': TokenID.AND,
+        'oder': TokenID.OR,
+        'nicht': TokenID.NOT,
+        'wahr': TokenID.TRUE,
+        'falsch': TokenID.FALSE,
+    },
+    'it': {
+        'se': TokenID.IF,
+        'altrimenti': TokenID.ELSE,
+        'funzione': TokenID.FUNCTION,
+        'restituisci': TokenID.RETURN,
+        'lancia': TokenID.SPAWN,
+        'recupera': TokenID.RECOVER,
+        'ascolta': TokenID.LISTEN,
+        'mentre': TokenID.WHILE,
+        'interrompi': TokenID.BREAK,
+        'continua': TokenID.CONTINUE,
+        'importa': TokenID.IMPORT,
+        'struttura': TokenID.STRUCT,
+        'e': TokenID.AND,
+        'o': TokenID.OR,
+        'non': TokenID.NOT,
+        'vero': TokenID.TRUE,
+        'falso': TokenID.FALSE,
     },
 }
 
@@ -50,6 +136,8 @@ OPERADORES_BINARIOS: dict[TokenID, str] = {
     TokenID.STAR: '*',
     TokenID.SLASH: '/',
     TokenID.MODULO: '%',
+    TokenID.AND: '&&',
+    TokenID.OR: '||',
 }
 
 TOKEN_UNICARACTER: dict[str, TokenID] = {
@@ -191,12 +279,24 @@ class Lexer:
 
             if texto[i].isdigit():
                 inicio = i
+                es_float = False
                 while i < len(texto) and texto[i].isdigit():
                     i += 1
-                valor = int(texto[inicio:i])
-                self.tokens.append(
-                    Token(TokenID.NUMBER, linea=self.linea_actual, columna=inicio, valor=valor)
-                )
+                if i < len(texto) and texto[i] == '.':
+                    es_float = True
+                    i += 1
+                    while i < len(texto) and texto[i].isdigit():
+                        i += 1
+                if es_float:
+                    valor = float(texto[inicio:i])
+                    self.tokens.append(
+                        Token(TokenID.FLOAT, linea=self.linea_actual, columna=inicio, valor=valor)
+                    )
+                else:
+                    valor = int(texto[inicio:i])
+                    self.tokens.append(
+                        Token(TokenID.NUMBER, linea=self.linea_actual, columna=inicio, valor=valor)
+                    )
                 continue
 
             if texto[i].isalpha() or texto[i] == '_':

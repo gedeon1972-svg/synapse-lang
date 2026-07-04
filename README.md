@@ -7,7 +7,7 @@ Synapse es una arquitectura de programación diseñada para entornos donde la pr
 - **Cero dependencias:** El compilador es un binario autocontenido. No requiere Python, Node, ni librerías del sistema.
 - **Memoria determinista:** Sistema de *pool allocation* con bloques fijos. Sin `malloc/free` caótico, sin *Garbage Collector*. Rendimiento predecible para IA y sistemas embebidos.
 - **IA nativa:** Tensores 2D, producto punto y funciones de activación (ReLU) son instrucciones de primera clase. Inferencia de alto rendimiento sin bibliotecas externas.
-- **Poliglota por diseño:** El AST canónico se serializa a código fuente en español o inglés (ej. `#lang:es`).
+- **Poliglota por diseño:** El AST canónico se serializa a código fuente en español, inglés, francés, portugués, alemán o italiano (ej. `#lang:es`, `#lang:fr`, `#lang:de`).
 - **Soberanía de datos:** Diseñado para orquestar agentes y modelos que operan estrictamente en el dispositivo.
 
 ## Estado del Proyecto
@@ -21,6 +21,7 @@ Synapse es una arquitectura de programación diseñada para entornos donde la pr
 | Operaciones Tensoriales | Estable | Producto punto, suma, ReLU |
 | Lógica Booleana | Estable | `y`, `o`, `no` operativos |
 | Concurrencia (`lanzar`) | Estable | Threads vía pthread |
+| Sistema Poliglota | Estable | 6 idiomas: es, en, fr, pt, de, it |
 
 ## Inicio Rápido
 **Compilación:**
@@ -31,6 +32,9 @@ Synapse es una arquitectura de programación diseñada para entornos donde la pr
 # Compila el ejecutable nativo
 gcc -o programa.exe programa.c
 ./programa.exe
+
+# Re-genera fuente Synapse en otro idioma desde el AST canónico
+python main.py programa.syn.json --lang fr
 ```
 
 Ejemplo:

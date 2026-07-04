@@ -9,12 +9,12 @@ representacion canonica (JSON), no el texto en un idioma particular.
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    CAPA DE INTERFAZ HUMANA                       │
-│  (Entrada/Salida en cualquier idioma: es, en, ja, fr, ...)       │
+│  (Entrada/Salida en cualquier idioma: es, en, fr, pt, de, it, ...) │
 └──────────────────────────┬───────────────────────────────────────┘
                            │
 ┌──────────────────────────▼───────────────────────────────────────┐
 │  LEXER POLIGLOTA                                                 │
-│  - Detecta #lang: es|en|... en la primera linea                  │
+│  - Detecta #lang: es|en|fr|pt|de|it|... en la primera linea      │
 │  - Selecciona el DICCIONARIO correspondiente                     │
 │  - Mapea palabras a TokenID universales                          │
 │  - Produce tokens agnosticos al idioma                           │
@@ -81,12 +81,56 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'while':     TokenID.WHILE,
         'import':    TokenID.IMPORT,
     },
+    'fr': {
+        'si':        TokenID.IF,
+        'sinon':     TokenID.ELSE,
+        'fonction':  TokenID.FUNCTION,
+        'retourner': TokenID.RETURN,
+        'lancer':    TokenID.SPAWN,
+        'recuperer': TokenID.RECOVER,
+        'ecouter':   TokenID.LISTEN,
+        'tantque':   TokenID.WHILE,
+        'importer':  TokenID.IMPORT,
+    },
+    'pt': {
+        'se':        TokenID.IF,
+        'senao':     TokenID.ELSE,
+        'funcao':    TokenID.FUNCTION,
+        'retornar':  TokenID.RETURN,
+        'lancar':    TokenID.SPAWN,
+        'recuperar': TokenID.RECOVER,
+        'escutar':   TokenID.LISTEN,
+        'enquanto':  TokenID.WHILE,
+        'importar':  TokenID.IMPORT,
+    },
+    'de': {
+        'wenn':      TokenID.IF,
+        'sonst':     TokenID.ELSE,
+        'funktion':  TokenID.FUNCTION,
+        'rueckgabe': TokenID.RETURN,
+        'starten':   TokenID.SPAWN,
+        'wiederherstellen': TokenID.RECOVER,
+        'hoeren':    TokenID.LISTEN,
+        'waehrend':  TokenID.WHILE,
+        'importieren': TokenID.IMPORT,
+    },
+    'it': {
+        'se':        TokenID.IF,
+        'altrimenti': TokenID.ELSE,
+        'funzione':  TokenID.FUNCTION,
+        'restituisci': TokenID.RETURN,
+        'lancia':    TokenID.SPAWN,
+        'recupera':  TokenID.RECOVER,
+        'ascolta':   TokenID.LISTEN,
+        'mentre':    TokenID.WHILE,
+        'importa':   TokenID.IMPORT,
+    },
 }
 ```
 
 ### Contrato
 
-1. Cada **idioma** tiene un codigo (ej: `es`, `en`, `ja`, `fr`)
+1. Cada **idioma** tiene un codigo (ej: `es`, `en`, `fr`, `pt`, `de`, `it`)
 2. Cada **palabra clave** se mapea a un `TokenID` universal
 3. `TokenID` es un Enum con nombres en ingles NEUTRO (no es "ingles del lenguaje",
    es el identificador interno del compilador)
@@ -151,6 +195,18 @@ python compilador.py programa.syn.json --lang es
 
 # Leer canónico y re-generar texto en inglés
 python compilador.py programa.syn.json --lang en
+
+# Leer canónico y re-generar texto en francés
+python compilador.py programa.syn.json --lang fr
+
+# Leer canónico y re-generar texto en portugués
+python compilador.py programa.syn.json --lang pt
+
+# Leer canónico y re-generar texto en alemán
+python compilador.py programa.syn.json --lang de
+
+# Leer canónico y re-generar texto en italiano
+python compilador.py programa.syn.json --lang it
 ```
 
 ## Flujo de Trabajo del Desarrollador
@@ -165,6 +221,10 @@ editor -> program.syn  (#lang: en) -> python compilador.py -> program.syn.json (
 ```
 git pull -> programa.syn.json -> python compilador.py programa.syn.json --lang es -> programa.es.syn
 git pull -> program.syn.json  -> python compilador.py program.syn.json  --lang en -> program.en.syn
+git pull -> programme.syn.json -> python compilador.py programme.syn.json --lang fr -> programme.fr.syn
+git pull -> programa.syn.json  -> python compilador.py programa.syn.json  --lang pt -> programa.pt.syn
+git pull -> programm.syn.json  -> python compilador.py programm.syn.json  --lang de -> programm.de.syn
+git pull -> programma.syn.json -> python compilador.py programma.syn.json --lang it -> programma.it.syn
 ```
 
 ### El AST canonico es SIEMPRE identico
