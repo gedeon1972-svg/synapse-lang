@@ -8,4 +8,7 @@ __pycache__/
 *.out
 
 # Ocultar carpetas temporales
-temp_test*/    
+temp_test*/
+
+# Ocultar distribución empaquetada (binarios)
+dist/    

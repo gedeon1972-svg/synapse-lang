@@ -1,0 +1,16 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Synapse",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "type": "shell",
+            "command": "synapse.exe ${file} && gcc ${fileDirname}\\${fileBasenameNoExtension}.c synapse_rt.o -o ${fileDirname}\\${fileBasenameNoExtension} -lpthread",
+            "problemMatcher": [],
+            "detail": "Compila el archivo .syn actual con synapse.exe y enlaza con gcc"
+        }
+    ]
+}
