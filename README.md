@@ -10,14 +10,21 @@
 - **Evaluación lógica de cortocircuito:** Los operadores `y`/`o` evalúan en cortocircuito, optimizando flujos booleanos sin efectos secundarios innecesarios.
 - **Tensor como ciudadano de primera clase:** Tipo `Tensor` 2D con producto punto, suma y ReLU como operaciones nativas del lenguaje.
 
-## Instalación (Quickstart)
-1. Extrae la carpeta `dist/` en cualquier ubicación.
-2. Ejecuta `install.ps1` (clic derecho → "Ejecutar con PowerShell").
-3. Reinicia tu terminal. Ahora `synapse` está disponible globalmente.
+## Instalación Rápida (One-Liner)
 
-## Uso en VS Code
-- La extensión de sintaxis Synapse está en `dist/vscode-synapse/`. Instálala desde la carpeta o copia a `~/.vscode/extensions/`.
-- Atajo de compilación: `Ctrl+Shift+B` ejecuta la tarea "Build Synapse" definida en `.vscode/tasks.json`.
+Abre PowerShell y ejecuta:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/gedeon1972-svg/synapse-lang/main/install.ps1" -UseBasicParsing | Invoke-Expression
+```
+
+El script descargará la última versión, la instalará en `C:\Synapse`, configurará el PATH del usuario y activará el coloreado sintáctico en VS Code automáticamente.
+
+## Instalación Manual
+1. Descarga `synapse-v1.4.0-windows-x64.zip` desde [Releases](https://github.com/gedeon1972-svg/synapse-lang/releases).
+2. Extrae en `C:\Synapse`.
+3. Ejecuta `install.ps1` (clic derecho → "Ejecutar con PowerShell").
+4. Reinicia tu terminal. Ahora `synapse` está disponible globalmente.
 
 ## Synapse v1.4.0 — Concurrencia Nativa
 
