@@ -90,16 +90,22 @@ static inline float* _pool_malloc(size_t tamano) {
     return _p;
 }
 
-// --- std.io ---
+// --- Thread-safe I/O ---
+pthread_mutex_t io_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void escribir(CadenaSegura contenido) {
+    pthread_mutex_lock(&io_mutex);
     fwrite(contenido.datos, 1, contenido.longitud, stdout);
     fflush(stdout);
+    pthread_mutex_unlock(&io_mutex);
 }
 
 void escribir_linea(CadenaSegura contenido) {
+    pthread_mutex_lock(&io_mutex);
     fwrite(contenido.datos, 1, contenido.longitud, stdout);
     fwrite("\n", 1, 1, stdout);
     fflush(stdout);
+    pthread_mutex_unlock(&io_mutex);
 }
 
 CadenaSegura leer_linea() {
@@ -272,4 +278,50 @@ CadenaSegura entero_a_texto(int n) {
     if (!data) { fprintf(stderr, "ESCAPA_DEL_ALCANCE: malloc fallo en entero_a_texto\n"); exit(1); }
     memcpy(data, buf, len + 1);
     return (CadenaSegura){ .longitud = len, .datos = data };
+}
+
+// --- Thread tracker ---
+static int hilos_activos = 0;
+static pthread_mutex_t hilo_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t hilo_cond = PTHREAD_COND_INITIALIZER;
+
+struct _HiloArgs {
+    void* (*fn)(void*);
+    void* arg;
+};
+
+static void* _synapse_hilo_wrapper(void* raw_args) {
+    struct _HiloArgs* ha = (struct _HiloArgs*)raw_args;
+    void* (*fn)(void*) = ha->fn;
+    void* arg = ha->arg;
+    free(ha);
+    fn(arg);
+    pthread_mutex_lock(&hilo_mutex);
+    hilos_activos--;
+    if (hilos_activos == 0) {
+        pthread_cond_broadcast(&hilo_cond);
+    }
+    pthread_mutex_unlock(&hilo_mutex);
+    return NULL;
+}
+
+void synapse_lanzar_hilo(void* (*fn)(void*), void* arg) {
+    pthread_mutex_lock(&hilo_mutex);
+    hilos_activos++;
+    pthread_mutex_unlock(&hilo_mutex);
+    struct _HiloArgs* ha = (struct _HiloArgs*)malloc(sizeof(struct _HiloArgs));
+    if (!ha) { fprintf(stderr, "ESCAPA_DEL_ALCANCE: malloc fallo en synapse_lanzar_hilo\n"); exit(1); }
+    ha->fn = fn;
+    ha->arg = arg;
+    pthread_t _t;
+    pthread_create(&_t, NULL, _synapse_hilo_wrapper, ha);
+    pthread_detach(_t);
+}
+
+void synapse_esperar_hilos(void) {
+    pthread_mutex_lock(&hilo_mutex);
+    while (hilos_activos > 0) {
+        pthread_cond_wait(&hilo_cond, &hilo_mutex);
+    }
+    pthread_mutex_unlock(&hilo_mutex);
 }

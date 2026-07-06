@@ -37,6 +37,8 @@ extern int texto_a_entero(CadenaSegura str);
 extern float texto_a_decimal(CadenaSegura str);
 extern CadenaSegura decimal_a_texto(float n);
 extern CadenaSegura entero_a_texto(int n);
+extern void synapse_lanzar_hilo(void* (*fn)(void*), void* arg);
+extern void synapse_esperar_hilos(void);
 
 static int _g_argc;
 static char** _g_argv;
@@ -494,6 +496,7 @@ static void _P_tokenizar(const char* s, int len) {
     while (i < len && _P_ntks < MAX_TOKS - 1) {
         char c = s[i];
         if (c == ' ' || c == '\t') { i++; co++; continue; }
+        if (c == '\r') { i++; continue; }
         if (c == '\n') {
             _P_tks[_P_ntks].tipo = T_NL; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = 0;
             _P_ntks++; i++; li++; co = 1;
@@ -521,29 +524,29 @@ static void _P_tokenizar(const char* s, int len) {
             while (i < len && s[i] != '\n') i++; continue;
         }
         if (c == '"' || c == '\'') {
-            char q = c; int st = i; i++; co++;
+            char q = c; int st = i; int scol = co; i++; co++;
             while (i < len && s[i] != q) { i++; co++; }
             if (i >= len) break;
             i++; co++;
             int vl = (i - st - 2) < 255 ? (i - st - 2) : 255;
             strncpy(_P_tks[_P_ntks].val, s + st + 1, vl); _P_tks[_P_ntks].val[vl] = 0;
-            _P_tks[_P_ntks].tipo = T_STR; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = st;
+            _P_tks[_P_ntks].tipo = T_STR; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = scol;
             _P_ntks++; continue;
         }
         if (c >= '0' && c <= '9') {
-            int st = i; while (i < len && s[i] >= '0' && s[i] <= '9') i++;
+            int st = i; int scol = co; while (i < len && s[i] >= '0' && s[i] <= '9') i++;
             if (i < len && s[i] == '.') { i++; while (i < len && s[i] >= '0' && s[i] <= '9') i++; }
             int vl = (i - st) < 255 ? (i - st) : 255;
             strncpy(_P_tks[_P_ntks].val, s + st, vl); _P_tks[_P_ntks].val[vl] = 0;
-            _P_tks[_P_ntks].tipo = T_NUM; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = st;
+            _P_tks[_P_ntks].tipo = T_NUM; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = scol;
             _P_ntks++; co += (i - st); continue;
         }
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
-            int st = i;
+            int st = i; int scol = co;
             while (i < len && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) i++;
             int vl = (i - st) < 255 ? (i - st) : 255;
             strncpy(_P_tks[_P_ntks].val, s + st, vl); _P_tks[_P_ntks].val[vl] = 0;
-            _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = st;
+            _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = scol;
             if (strcmp(_P_tks[_P_ntks].val, "si") == 0 || strcmp(_P_tks[_P_ntks].val, "if") == 0) _P_tks[_P_ntks].tipo = T_IF;
             else if (strcmp(_P_tks[_P_ntks].val, "sino") == 0 || strcmp(_P_tks[_P_ntks].val, "else") == 0) _P_tks[_P_ntks].tipo = T_ELSE;
             else if (strcmp(_P_tks[_P_ntks].val, "funcion") == 0 || strcmp(_P_tks[_P_ntks].val, "function") == 0) _P_tks[_P_ntks].tipo = T_FUNC;
@@ -564,6 +567,7 @@ static void _P_tokenizar(const char* s, int len) {
             else { _P_tks[_P_ntks].tipo = T_IDENT; }
             _P_ntks++; co += (i - st); continue;
         }
+        if ((unsigned char)c >= 0x80) { i++; continue; }
         if (i+1 < len) {
             if (c == '-' && s[i+1] == '>') {
                 _P_tks[_P_ntks].tipo = T_ARROW; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = co;
@@ -605,6 +609,10 @@ static void _P_tokenizar(const char* s, int len) {
             _P_ntks++; i++; co++;
         }
     }
+    while (_P_nivel_pila > 0) {
+        _P_tks[_P_ntks].tipo = T_DEDENT; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = 0;
+        _P_ntks++; _P_nivel_pila--;
+    }
     _P_tks[_P_ntks].tipo = T_EOF; _P_tks[_P_ntks].linea = li; _P_tks[_P_ntks].col = 0;
     _P_ntks++;
 }
@@ -633,7 +641,7 @@ static int _P_esperar(int t) {
     if (_P_mirar()->tipo == t) { _P_avanzar(); return 1; }
     fprintf(stderr, "[PARSER] L%d:%d: esperaba token %d, encontre %d\n",
             _P_mirar()->linea, _P_mirar()->col, t, _P_mirar()->tipo);
-    _P_p_err++; return 0;
+    exit(1);
 }
 static void _P_sinc_skip() {
     while (_P_tpos < _P_ntks) {
@@ -1020,7 +1028,7 @@ static struct Nodo* _P_prim() {
     }
     if (t->tipo==T_LPAREN) { _P_avanzar(); struct Nodo* e=_P_expr(); _P_esperar(T_RPAREN); return e; }
     fprintf(stderr,"[PARSER] L%d:%d: expresion inesperada token=%d\n",t->linea,t->col,t->tipo);
-    _P_p_err++; _P_avanzar(); return NULL;
+    exit(1);
 }
 static struct Programa _P_programa() {
     struct ListaNodo* lst=NULL; struct ListaNodo** cur=&lst;
@@ -1215,7 +1223,7 @@ static void _G_v(struct Nodo* n) {
     if(strcmp(t,"LogLlamada")==0){ _G_v_log((struct LogLlamada*)n); return; }
     if(strcmp(t,"SentenciaRomper")==0){ _G_emit("break;"); return; }
     if(strcmp(t,"SentenciaSiguiente")==0){ _G_emit("continue;"); return; }
-    if(strcmp(t,"SentenciaLanzar")==0){ struct SentenciaLanzar* l=(struct SentenciaLanzar*)n; _G_ea(l->llamada,v,4096); snprintf(b,sizeof(b),"pthread_t _t; pthread_create(&_t,NULL,(void*(*)(void*))%s,NULL); pthread_detach(&_t);",v); _G_emit(b); return; }
+    if(strcmp(t,"SentenciaLanzar")==0){ struct SentenciaLanzar* l=(struct SentenciaLanzar*)n; char fn[256]=""; char ab[512]=""; int ha=0; if(strcmp(l->llamada->tipo.datos,"LlamadaFuncion")==0){ struct LlamadaFuncion* lf=(struct LlamadaFuncion*)l->llamada; _G_cp(fn,lf->nombre); if(lf->argumentos){ _G_ea(lf->argumentos->cabeza,ab,512); ha=1; } }else{ _G_ea(l->llamada,fn,256); ha=1; } if(ha){ snprintf(b,sizeof(b),"synapse_lanzar_hilo((void*(*)(void*))%s,(void*)(intptr_t)(%s));",fn,ab); }else{ snprintf(b,sizeof(b),"synapse_lanzar_hilo((void*(*)(void*))%s,NULL);",fn); } _G_emit(b); return; }
     if(strcmp(t,"SentenciaRecuperar")==0){ struct SentenciaRecuperar* r=(struct SentenciaRecuperar*)n; _G_ea(r->accion_critica,b,4096); _G_ea(r->plan_b,v,4096); _G_emit("{"); _G_indent++; snprintf(b2,sizeof(b2),"if(%s!=0){%s;}",b,v); _G_emit(b2); _G_indent--; _G_emit("}"); return; }
     if(strcmp(t,"SentenciaEscuchar")==0){ struct SentenciaEscuchar* e=(struct SentenciaEscuchar*)n; _G_ea(e->canal,b,4096); _G_ea(e->respuesta,v,4096); snprintf(b2,sizeof(b2),"/* escuchar: %s -> %s */",b,v); _G_emit(b2); return; }
     if(strcmp(t,"DefinicionEstructura")==0){ _G_vest((struct DefinicionEstructura*)n); return; }
@@ -1255,6 +1263,8 @@ int generar(struct Programa programa, CadenaSegura ruta) {
     fprintf(_G_out,"extern float texto_a_decimal(CadenaSegura str);\n");
     fprintf(_G_out,"extern CadenaSegura decimal_a_texto(float n);\n");
     fprintf(_G_out,"extern CadenaSegura entero_a_texto(int n);\n");
+    fprintf(_G_out,"extern void synapse_lanzar_hilo(void* (*fn)(void*), void* arg);\n");
+    fprintf(_G_out,"extern void synapse_esperar_hilos(void);\n");
     fprintf(_G_out,"extern void pool_init(uint32_t total_blocks, uint32_t block_size);\n");
     fprintf(_G_out,"extern void pool_free(void* ptr);\n");
     fprintf(_G_out,"static int _g_argc;\nstatic char** _g_argv;\nint _argc(){return _g_argc;}\n");
@@ -1276,11 +1286,28 @@ int generar(struct Programa programa, CadenaSegura ruta) {
     _G_emit("char** _g_argv=argv;");
     _G_emit("pool_init(POOL_BLOQUES, TAMANO_BLOQUE);");
     _G_emit("principal();");
+    _G_emit("synapse_esperar_hilos();");
     _G_emit("return 0;");
     _G_indent--;
     _G_emit("}");
     fclose(_G_out);
-    fprintf(stderr,"generar: OK -> %s\n",sal);
+    char cmd[2048];
+    char out_exe[1024];
+    int slen = (int)strlen(sal);
+    if (slen > 2 && sal[slen-2] == '.' && sal[slen-1] == 'c') {
+        memcpy(out_exe, sal, slen - 2);
+        out_exe[slen - 2] = 0;
+        strcat(out_exe, ".exe");
+    } else {
+        snprintf(out_exe, sizeof(out_exe), "%s.exe", sal);
+    }
+    snprintf(cmd, sizeof(cmd), "gcc \"%s\" \"C:\\Synapse\\lib\\synapse_rt.o\" -o \"%s\" -lpthread -lm", sal, out_exe);
+    int rc = system(cmd);
+    if (rc != 0) {
+        fprintf(stderr, "[LINKER ERROR] gcc fallo con codigo %d\n", rc);
+        exit(1);
+    }
+    fprintf(stderr, "OK: %s\n", out_exe);
     return 0;
 }
 CadenaSegura _traducir_tipo_c(CadenaSegura tipo_synapse) {
@@ -1335,12 +1362,12 @@ void principal(void) {
     /* ADVERTENCIA: canal 'canal' no fue cerrado explicitamente */
     if (canal.stream) { fclose(canal.stream); canal.es_valido = 0; }
     free((void*)lib_math.datos);
-    free((void*)lib_gen.datos);
-    free((void*)lib_io.datos);
-    free((void*)lib_mem.datos);
-    free((void*)lib_parse.datos);
     free((void*)lib_ast.datos);
     free((void*)fuente.datos);
+    free((void*)lib_gen.datos);
+    free((void*)lib_mem.datos);
+    free((void*)lib_parse.datos);
+    free((void*)lib_io.datos);
 }
 
 int main(int argc, char** argv) {
@@ -1348,5 +1375,6 @@ int main(int argc, char** argv) {
     _g_argv = argv;
     pool_init(POOL_BLOQUES, TAMANO_BLOQUE);
     principal();
+    synapse_esperar_hilos();
     return 0;
 }

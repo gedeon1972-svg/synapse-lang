@@ -179,6 +179,7 @@ class GeneradorC:
         self._push("pool_init(POOL_BLOQUES, TAMANO_BLOQUE);")
         if principal:
             self._push(f"{principal}();")
+        self._push("synapse_esperar_hilos();")
         self._push("return 0;")
         self.indent -= 1
         self._push("}")
@@ -224,6 +225,8 @@ class GeneradorC:
         self._push("extern float texto_a_decimal(CadenaSegura str);")
         self._push("extern CadenaSegura decimal_a_texto(float n);")
         self._push("extern CadenaSegura entero_a_texto(int n);")
+        self._push("extern void synapse_lanzar_hilo(void* (*fn)(void*), void* arg);")
+        self._push("extern void synapse_esperar_hilos(void);")
         self._push("")
 
     def _visitar(self, nodo: Nodo):
@@ -610,6 +613,7 @@ class GeneradorC:
         self.indent += 1
         self._push("char _c = fuente.datos[_i];")
         self._push("if (_c == ' ' || _c == '\\t') { _i++; _columna++; continue; }")
+        self._push("if (_c == '\\r') { _i++; continue; }")
         self._push("if (_c == '\\n') { _i++; _linea++; _columna = 1; continue; }")
         self._push("if (_c == '/' && _i + 1 < fuente.longitud && fuente.datos[_i + 1] == '/') {")
         self.indent += 1
@@ -650,9 +654,23 @@ class GeneradorC:
         self._push("    (fuente.datos[_i] >= '0' && fuente.datos[_i] <= '9') ||")
         self._push("    fuente.datos[_i] == '_'")
         self._push(")) { _i++; }")
-        self._push("_columna += _i - _start;")
+        self._push("int _len_id = _i - _start;")
+        self._push("char _buf_id[256]; int _clip = _len_id < 255 ? _len_id : 255;")
+        self._push("strncpy(_buf_id, fuente.datos + _start, _clip); _buf_id[_clip] = 0;")
+        self._push("_columna += _len_id;")
         self._push("_token_count++;")
-        self._push('fprintf(stderr, "  TOKEN IDENTIFIER L%d:%d\\n", _linea, _columna);')
+        self._push("if (strcmp(_buf_id, \"verdadero\") == 0 || strcmp(_buf_id, \"true\") == 0)")
+        self._push('    fprintf(stderr, "  TOKEN TRUE L%d:%d\\n", _linea, _columna);')
+        self._push("else if (strcmp(_buf_id, \"falso\") == 0 || strcmp(_buf_id, \"false\") == 0)")
+        self._push('    fprintf(stderr, "  TOKEN FALSE L%d:%d\\n", _linea, _columna);')
+        self._push("else if (strcmp(_buf_id, \"y\") == 0 || strcmp(_buf_id, \"and\") == 0)")
+        self._push('    fprintf(stderr, "  TOKEN AND L%d:%d\\n", _linea, _columna);')
+        self._push("else if (strcmp(_buf_id, \"o\") == 0 || strcmp(_buf_id, \"or\") == 0)")
+        self._push('    fprintf(stderr, "  TOKEN OR L%d:%d\\n", _linea, _columna);')
+        self._push("else if (strcmp(_buf_id, \"no\") == 0 || strcmp(_buf_id, \"not\") == 0)")
+        self._push('    fprintf(stderr, "  TOKEN NOT L%d:%d\\n", _linea, _columna);')
+        self._push("else")
+        self._push('    fprintf(stderr, "  TOKEN IDENTIFIER L%d:%d\\n", _linea, _columna);')
         self.indent -= 1
         self._push("}")
         self._push("else {")
@@ -754,6 +772,7 @@ class GeneradorC:
             "    while (i < len && " + P + "ntks < MAX_TOKS - 1) {",
             "        char c = s[i];",
             "        if (c == ' ' || c == '\\t') { i++; co++; continue; }",
+"        if (c == '\\r') { i++; continue; }",
             "        if (c == '\\n') {",
             "            " + P + "tks[" + P + "ntks].tipo = T_NL; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
             "            " + P + "ntks++; i++; li++; co = 1;",
@@ -780,30 +799,30 @@ class GeneradorC:
             "        if (c == '#') {",
             "            while (i < len && s[i] != '\\n') i++; continue;",
             "        }",
-            "        if (c == '\"' || c == '\\'') {",
-            "            char q = c; int st = i; i++; co++;",
-            "            while (i < len && s[i] != q) { i++; co++; }",
-            "            if (i >= len) break;",
-            "            i++; co++;",
-            "            int vl = (i - st - 2) < 255 ? (i - st - 2) : 255;",
-            "            strncpy(" + P + "tks[" + P + "ntks].val, s + st + 1, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
-            "            " + P + "tks[" + P + "ntks].tipo = T_STR; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = st;",
+"        if (c == '\"' || c == '\\'') {",
+"            char q = c; int st = i; int scol = co; i++; co++;",
+"            while (i < len && s[i] != q) { i++; co++; }",
+"            if (i >= len) break;",
+"            i++; co++;",
+"            int vl = (i - st - 2) < 255 ? (i - st - 2) : 255;",
+"            strncpy(" + P + "tks[" + P + "ntks].val, s + st + 1, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
+"            " + P + "tks[" + P + "ntks].tipo = T_STR; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = scol;",
             "            " + P + "ntks++; continue;",
             "        }",
-            "        if (c >= '0' && c <= '9') {",
-            "            int st = i; while (i < len && s[i] >= '0' && s[i] <= '9') i++;",
-            "            if (i < len && s[i] == '.') { i++; while (i < len && s[i] >= '0' && s[i] <= '9') i++; }",
-            "            int vl = (i - st) < 255 ? (i - st) : 255;",
-            "            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
-            "            " + P + "tks[" + P + "ntks].tipo = T_NUM; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = st;",
+"        if (c >= '0' && c <= '9') {",
+"            int st = i; int scol = co; while (i < len && s[i] >= '0' && s[i] <= '9') i++;",
+"            if (i < len && s[i] == '.') { i++; while (i < len && s[i] >= '0' && s[i] <= '9') i++; }",
+"            int vl = (i - st) < 255 ? (i - st) : 255;",
+"            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
+"            " + P + "tks[" + P + "ntks].tipo = T_NUM; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = scol;",
             "            " + P + "ntks++; co += (i - st); continue;",
             "        }",
-            "        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {",
-            "            int st = i;",
-            "            while (i < len && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) i++;",
-            "            int vl = (i - st) < 255 ? (i - st) : 255;",
-            "            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
-            "            " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = st;",
+"        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {",
+"            int st = i; int scol = co;",
+"            while (i < len && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_')) i++;",
+"            int vl = (i - st) < 255 ? (i - st) : 255;",
+"            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
+"            " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = scol;",
             '            if (strcmp(' + P + 'tks[' + P + 'ntks].val, "si") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "if") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_IF;',
             '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "sino") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "else") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_ELSE;',
             '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "funcion") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "function") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_FUNC;',
@@ -824,7 +843,8 @@ class GeneradorC:
             '            else { ' + P + 'tks[' + P + 'ntks].tipo = T_IDENT; }',
             "            " + P + "ntks++; co += (i - st); continue;",
             "        }",
-            "        if (i+1 < len) {",
+            "        if ((unsigned char)c >= 0x80) { i++; continue; }",
+"        if (i+1 < len) {",
             "            if (c == '-' && s[i+1] == '>') {",
             "                " + P + "tks[" + P + "ntks].tipo = T_ARROW; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
             "                " + P + "ntks++; i+=2; co+=2; continue;",
@@ -865,6 +885,10 @@ class GeneradorC:
             "            " + P + "ntks++; i++; co++;",
             "        }",
             "    }",
+            "    while (" + P + "nivel_pila > 0) {",
+            "        " + P + "tks[" + P + "ntks].tipo = T_DEDENT; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
+            "        " + P + "ntks++; " + P + "nivel_pila--;",
+            "    }",
             "    " + P + "tks[" + P + "ntks].tipo = T_EOF; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = 0;",
             "    " + P + "ntks++;",
             "}",
@@ -904,7 +928,7 @@ class GeneradorC:
             "    if (" + _P + "mirar()->tipo == t) { " + _P + "avanzar(); return 1; }",
             '    fprintf(stderr, "[PARSER] L%d:%d: esperaba token %d, encontre %d\\n",',
             "            " + _P + "mirar()->linea, " + _P + "mirar()->col, t, " + _P + "mirar()->tipo);",
-            "    " + _P + "p_err++; return 0;",
+            "    exit(1);",
             "}",
             "static void " + _P + "sinc_skip() {",
             "    while (" + _P + "tpos < " + _P + "ntks) {",
@@ -1294,7 +1318,7 @@ static struct Nodo* """ + _P + """prim() {
     }
     if (t->tipo==T_LPAREN) { """ + _P + """avanzar(); struct Nodo* e=""" + _P + """expr(); """ + _P + """esperar(T_RPAREN); return e; }
     fprintf(stderr,"[PARSER] L%d:%d: expresion inesperada token=%d\\n",t->linea,t->col,t->tipo);
-    """ + _P + """p_err++; """ + _P + """avanzar(); return NULL;
+    exit(1);
 }
 static struct Programa """ + _P + """programa() {
     struct ListaNodo* lst=NULL; struct ListaNodo** cur=&lst;
@@ -1501,7 +1525,7 @@ static void {_PH}v(struct Nodo* n) {{
     if(strcmp(t,"LogLlamada")==0){{ {_PH}v_log((struct LogLlamada*)n); return; }}
     if(strcmp(t,"SentenciaRomper")==0){{ {_PH}emit("break;"); return; }}
     if(strcmp(t,"SentenciaSiguiente")==0){{ {_PH}emit("continue;"); return; }}
-    if(strcmp(t,"SentenciaLanzar")==0){{ struct SentenciaLanzar* l=(struct SentenciaLanzar*)n; {_PH}ea(l->llamada,v,4096); snprintf(b,sizeof(b),"pthread_t _t; pthread_create(&_t,NULL,(void*(*)(void*))%s,NULL); pthread_detach(&_t);",v); {_PH}emit(b); return; }}
+    if(strcmp(t,"SentenciaLanzar")==0){{ struct SentenciaLanzar* l=(struct SentenciaLanzar*)n; char fn[256]=""; char ab[512]=""; int ha=0; if(strcmp(l->llamada->tipo.datos,"LlamadaFuncion")==0){{ struct LlamadaFuncion* lf=(struct LlamadaFuncion*)l->llamada; {_PH}cp(fn,lf->nombre); if(lf->argumentos){{ {_PH}ea(lf->argumentos->cabeza,ab,512); ha=1; }} }}else{{ {_PH}ea(l->llamada,fn,256); ha=1; }} if(ha){{ snprintf(b,sizeof(b),"synapse_lanzar_hilo((void*(*)(void*))%s,(void*)(intptr_t)(%s));",fn,ab); }}else{{ snprintf(b,sizeof(b),"synapse_lanzar_hilo((void*(*)(void*))%s,NULL);",fn); }} {_PH}emit(b); return; }}
     if(strcmp(t,"SentenciaRecuperar")==0){{ struct SentenciaRecuperar* r=(struct SentenciaRecuperar*)n; {_PH}ea(r->accion_critica,b,4096); {_PH}ea(r->plan_b,v,4096); {_PH}emit("{{"); {_PH}indent++; snprintf(b2,sizeof(b2),"if(%s!=0){{%s;}}",b,v); {_PH}emit(b2); {_PH}indent--; {_PH}emit("}}"); return; }}
     if(strcmp(t,"SentenciaEscuchar")==0){{ struct SentenciaEscuchar* e=(struct SentenciaEscuchar*)n; {_PH}ea(e->canal,b,4096); {_PH}ea(e->respuesta,v,4096); snprintf(b2,sizeof(b2),"/* escuchar: %s -> %s */",b,v); {_PH}emit(b2); return; }}
     if(strcmp(t,"DefinicionEstructura")==0){{ {_PH}vest((struct DefinicionEstructura*)n); return; }}
@@ -1541,6 +1565,8 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
     fprintf({_PH}out,"extern float texto_a_decimal(CadenaSegura str);\\n");
     fprintf({_PH}out,"extern CadenaSegura decimal_a_texto(float n);\\n");
     fprintf({_PH}out,"extern CadenaSegura entero_a_texto(int n);\\n");
+    fprintf({_PH}out,"extern void synapse_lanzar_hilo(void* (*fn)(void*), void* arg);\\n");
+    fprintf({_PH}out,"extern void synapse_esperar_hilos(void);\\n");
     fprintf({_PH}out,"extern void pool_init(uint32_t total_blocks, uint32_t block_size);\\n");
     fprintf({_PH}out,"extern void pool_free(void* ptr);\\n");
     fprintf({_PH}out,"static int _g_argc;\\nstatic char** _g_argv;\\nint _argc(){{return _g_argc;}}\\n");
@@ -1562,11 +1588,28 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
     {_PH}emit("char** _g_argv=argv;");
     {_PH}emit("pool_init(POOL_BLOQUES, TAMANO_BLOQUE);");
     {_PH}emit("principal();");
+    {_PH}emit("synapse_esperar_hilos();");
     {_PH}emit("return 0;");
     {_PH}indent--;
     {_PH}emit("}}");
     fclose({_PH}out);
-    fprintf(stderr,"generar: OK -> %s\\n",sal);
+    char cmd[2048];
+    char out_exe[1024];
+    int slen = (int)strlen(sal);
+    if (slen > 2 && sal[slen-2] == '.' && sal[slen-1] == 'c') {{
+        memcpy(out_exe, sal, slen - 2);
+        out_exe[slen - 2] = 0;
+        strcat(out_exe, ".exe");
+    }} else {{
+        snprintf(out_exe, sizeof(out_exe), "%s.exe", sal);
+    }}
+    snprintf(cmd, sizeof(cmd), "gcc \\"%s\\" \\"C:\\\\Synapse\\\\lib\\\\synapse_rt.o\\" -o \\"%s\\" -lpthread -lm", sal, out_exe);
+    int rc = system(cmd);
+    if (rc != 0) {{
+        fprintf(stderr, "[LINKER ERROR] gcc fallo con codigo %d\\n", rc);
+        exit(1);
+    }}
+    fprintf(stderr, "OK: %s\\n", out_exe);
     return 0;
 }}
 """
@@ -1624,11 +1667,11 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
         if not isinstance(nodo.llamada, LlamadaFuncion):
             return
         func = nodo.llamada.nombre
-        self._contador_thread += 1
-        var_th = f"thrd_{func}_{self._contador_thread}"
-        self._push(f"pthread_t {var_th};")
-        self._push(f"pthread_create(&{var_th}, NULL, (void* (*)(void*)){func}, NULL);")
-        self._push(f"pthread_detach({var_th});")
+        if nodo.llamada.argumentos:
+            arg = self._expr_a_c(nodo.llamada.argumentos[0])
+            self._push("synapse_lanzar_hilo((void*(*)(void*)){0}, (void*)(intptr_t)({1}));".format(func, arg))
+        else:
+            self._push("synapse_lanzar_hilo((void*(*)(void*)){0}, NULL);".format(func))
 
     def _visitar_recuperar(self, nodo: SentenciaRecuperar):
         if nodo.accion_critica is None or nodo.plan_b is None:

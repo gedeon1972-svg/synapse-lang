@@ -44,9 +44,11 @@ def build():
     shutil.copy2(os.path.join(PROJECT_ROOT, "synapse.exe"),
                  os.path.join(bin_dir, "synapse.exe"))
 
-    # Copy runtime object
+    # Copy runtime object and header
     shutil.copy2(os.path.join(PROJECT_ROOT, "synapse_rt.o"),
                  os.path.join(lib_dir, "synapse_rt.o"))
+    shutil.copy2(os.path.join(PROJECT_ROOT, "synapse_rt.h"),
+                 os.path.join(lib_dir, "synapse_rt.h"))
 
     # Copy runtime headers (preserving relative structure for #include "librerias/...")
     lib_librerias = os.path.join(lib_dir, "librerias")
