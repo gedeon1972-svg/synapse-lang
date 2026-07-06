@@ -62,29 +62,41 @@ CadenaSegura concat(CadenaSegura a, CadenaSegura b) {
     return _r;
 }
 
-struct Usuario;
+struct Archivo;
 
-typedef struct Usuario {
-    int id;
-    CadenaSegura nombre;
-    int edad;
-} Usuario;
+#include <stdio.h>
+typedef struct Archivo {
+    int handle;
+} Archivo;
 
-static inline struct Usuario Usuario_nuevo() {
-    struct Usuario _r = {0};
+static inline struct Archivo Archivo_nuevo() {
+    struct Archivo _r = {0};
     return _r;
 }
 
+struct Archivo abrir_archivo(CadenaSegura ruta, CadenaSegura modo) {
+    struct Archivo a = Archivo_nuevo();
+    a.handle = fopen((ruta).datos, (modo).datos);
+    return a;
+}
+
+int cerrar_archivo(struct Archivo a) {
+    return fclose(a.handle);
+}
+
+int escribir_archivo(struct Archivo a, CadenaSegura contenido) {
+    return fputs((contenido).datos, a.handle);
+}
+
 void principal(void) {
-    struct Usuario usuario = Usuario_nuevo();
-    usuario.id = 42;
-    usuario.nombre = (CadenaSegura){ .longitud = 7, .datos = "Marcela" };
-    usuario.edad = 28;
-    escribir_linea((CadenaSegura){ .longitud = 29, .datos = "===== Datos del Usuario =====" });
-    printf("ID:  %d\n", usuario.id);
-    printf("Nombre:  %s\n", (usuario.nombre).datos);
-    printf("Edad:  %d\n", usuario.edad);
-    escribir_linea((CadenaSegura){ .longitud = 30, .datos = "==============================" });
+    printf("Iniciando prueba de std.fs...\n");
+    struct Archivo a = abrir_archivo((CadenaSegura){ .longitud = 18, .datos = "test_fs_output.txt" }, (CadenaSegura){ .longitud = 1, .datos = "w" });
+    printf("Archivo creado, handle:  %d\n", a.handle);
+    int r = escribir_archivo(a, (CadenaSegura){ .longitud = 17, .datos = "Synapse FS works!" });
+    printf("Bytes escritos:  %d\n", r);
+    int r2 = cerrar_archivo(a);
+    printf("Archivo cerrado, codigo:  %d\n", r2);
+    printf("Prueba completada.\n");
 }
 
 int main(int argc, char** argv) {

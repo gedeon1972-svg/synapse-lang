@@ -9,6 +9,8 @@ files = {
     "LIB_IO": "librerias/std/io.syn",
     "LIB_MEM": "librerias/std/mem.syn",
     "LIB_MATH": "librerias/std/math.syn",
+    "LIB_FS": "librerias/std/fs.syn",
+    "LIB_SYS": "librerias/std/sys.syn",
 }
 
 header_path = os.path.join("librerias", "embedded_libs.h")

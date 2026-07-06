@@ -1515,67 +1515,10 @@ CadenaSegura _traducir_tipo_c(CadenaSegura tipo_synapse) {
     return tipo_synapse;
 }
 
-struct Programa parsear(CadenaSegura fuente) {
-    _P_ntks = 0; _P_tpos = 0; _P_p_err = 0; _P_nivel_pila = 0;
-    _P_pila_indent[0] = 0;
-    _P_tokenizar(fuente.datos, fuente.longitud);
-    _P_procesar_indentacion_final();
-    struct Programa _prog = _P_programa();
-    return _prog;
-}
-
-void principal(void) {
-    if ((_argc() < 2)) {
-        printf("Uso: main <archivo.syn>\n");
-        salir(1);
-    }
-    CadenaSegura ruta = _argv(1);
-    printf("Compilando: %s\n", (ruta).datos);
-    Canal canal = abrir((CadenaSegura){ .longitud = 32, .datos = "librerias/compiler/ast_nodes.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura lib_ast = leer(canal);
-    cerrar(canal);
-    canal = abrir((CadenaSegura){ .longitud = 29, .datos = "librerias/compiler/parser.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura lib_parse = leer(canal);
-    cerrar(canal);
-    canal = abrir((CadenaSegura){ .longitud = 32, .datos = "librerias/compiler/generator.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura lib_gen = leer(canal);
-    cerrar(canal);
-    canal = abrir((CadenaSegura){ .longitud = 20, .datos = "librerias/std/io.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura lib_io = leer(canal);
-    cerrar(canal);
-    canal = abrir((CadenaSegura){ .longitud = 22, .datos = "librerias/std/math.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura lib_math = leer(canal);
-    cerrar(canal);
-    canal = abrir((CadenaSegura){ .longitud = 21, .datos = "librerias/std/mem.syn" }, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura lib_mem = leer(canal);
-    cerrar(canal);
-    canal = abrir(ruta, (CadenaSegura){ .longitud = 1, .datos = "r" });
-    CadenaSegura fuente = leer(canal);
-    cerrar(canal);
-    CadenaSegura fuente_completa = concat(concat(concat(concat(concat(concat(lib_ast, lib_parse), lib_gen), lib_io), lib_math), lib_mem), fuente);
-    struct Programa programa = parsear(fuente_completa);
-    int errores = generar(programa, ruta);
-    if ((errores > 0)) {
-        printf("Error: %d %s\n", errores, ((CadenaSegura){ .longitud = 8, .datos = "fallo(s)" }).datos);
-        salir(errores);
-    }
-    printf("OK: %s\n", (ruta).datos);
-    /* ADVERTENCIA: canal 'canal' no fue cerrado explicitamente */
-    if (canal.stream) { fclose(canal.stream); canal.es_valido = 0; }
-    free((void*)lib_parse.datos);
-    free((void*)lib_ast.datos);
-    free((void*)fuente.datos);
-    free((void*)lib_math.datos);
-    free((void*)lib_gen.datos);
-    free((void*)lib_io.datos);
-    free((void*)lib_mem.datos);
-}
-
 int main(int argc, char** argv) {
     _g_argc = argc;
     _g_argv = argv;
     pool_init(POOL_BLOQUES, TAMANO_BLOQUE);
-    principal();
     synapse_esperar_hilos();
     return 0;
 }

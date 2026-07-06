@@ -1,4 +1,4 @@
-# Synapse v1.4.0 — Lenguaje políglota de sistemas para inferencia local
+# Synapse v1.5.0 — Lenguaje políglota de sistemas para inferencia local
 
 ## Características Clave
 - **Hilos asíncronos nativos (`lanzar`):** Ejecuta funciones en hilos del sistema operativo con un solo comando. La concurrencia es un ciudadano de primera clase.
@@ -9,6 +9,12 @@
 - **Compilación directa a C nativo:** Sin dependencias pesadas. El binario del compilador es autocontenido y genera C puro vinculable a un runtime propio.
 - **Evaluación lógica de cortocircuito:** Los operadores `y`/`o` evalúan en cortocircuito, optimizando flujos booleanos sin efectos secundarios innecesarios.
 - **Tensor como ciudadano de primera clase:** Tipo `Tensor` 2D con producto punto, suma y ReLU como operaciones nativas del lenguaje.
+
+## Novedades v1.5.0
+- **Modo de Memoria Insegura y FFI:** Soporte oficial para `importar_c`, `externo`, bloques `inseguro` y punteros nativos `*` / `&`.
+- **Layouts de memoria estrictos:** Control explícito de estructuras y acceso de punteros para interoperabilidad binaria segura.
+- **Librería estándar del sistema:** Incluye los módulos `std.fs` y `std.sys` para operaciones de archivos y sistema desde Synapse.
+- **Compatibilidad ampliada:** El compilador ahora empaqueta la carpeta `std/` junto al runtime para su distribución.
 
 ## Instalación Rápida (One-Liner)
 
@@ -21,7 +27,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/gedeon1972-svg/synapse
 El script descargará la última versión, la instalará en `C:\Synapse`, configurará el PATH del usuario y activará el coloreado sintáctico en VS Code automáticamente.
 
 ## Instalación Manual
-1. Descarga `synapse-v1.4.0-windows-x64.zip` desde [Releases](https://github.com/gedeon1972-svg/synapse-lang/releases).
+1. Descarga `synapse-v1.5.0-windows-x64.zip` desde [Releases](https://github.com/gedeon1972-svg/synapse-lang/releases).
 2. Extrae en `C:\Synapse`.
 3. Ejecuta `install.ps1` (clic derecho → "Ejecutar con PowerShell").
 4. Reinicia tu terminal. Ahora `synapse` está disponible globalmente.

@@ -9,7 +9,8 @@ from ast_nodes import (
     SentenciaImportar, AsignacionVariable, SentenciaExpr, LogLlamada,
     OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
     LiteralNumero, LiteralDecimal, LiteralCadena, ExprTensor, ArgumentoTransferido,
-    Token, TokenID,
+    Token, TokenID, DeclaracionExterna,
+    BloqueInseguro, ExprObtenerDireccion, ExprDereferencia,
 )
 from diagnostics import DiagnosticManager, ErrorCodes
 from symbol_table import SymbolTable, Simbolo
@@ -72,9 +73,16 @@ class AnalizadorSemantico:
                     )
                 else:
                     self._estructuras[s.nombre] = s
-        # Second pass: register functions
+        # Second pass: register functions and extern declarations
         for s in self.programa.sentencias:
             if isinstance(s, DefinicionFuncion):
+                if not self.tabla.declarar(s.nombre, s.tipo_retorno, s):
+                    self.diag.reportar(
+                        ErrorCodes.ERR_SEM_REDEFINICION,
+                        self._token(s.linea, s.columna),
+                        nombre=s.nombre
+                    )
+            elif isinstance(s, DeclaracionExterna):
                 if not self.tabla.declarar(s.nombre, s.tipo_retorno, s):
                     self.diag.reportar(
                         ErrorCodes.ERR_SEM_REDEFINICION,
@@ -106,12 +114,13 @@ class AnalizadorSemantico:
         elif isinstance(nodo, AsignacionCampo):
             tipo_obj = self._inferir_tipo(nodo.objeto)
             if tipo_obj:
-                struct = self._estructuras.get(tipo_obj)
+                base_tipo = tipo_obj.rstrip('*')
+                struct = self._estructuras.get(base_tipo)
                 if struct is None:
                     self.diag.reportar(
                         ErrorCodes.ERR_SEM_ESTRUCTURA_NO_DEFINIDA,
                         self._token(nodo.linea, nodo.columna),
-                        nombre=tipo_obj
+                        nombre=base_tipo
                     )
                 else:
                     campo_val = next((c for c in struct.campos if c.nombre == nodo.nombre_campo), None)
@@ -119,7 +128,7 @@ class AnalizadorSemantico:
                         self.diag.reportar(
                             ErrorCodes.ERR_SEM_CAMPO_NO_EXISTE,
                             self._token(nodo.linea, nodo.columna),
-                            struct=tipo_obj, campo=nodo.nombre_campo
+                            struct=base_tipo, campo=nodo.nombre_campo
                         )
                     else:
                         tipo_expr = self._inferir_tipo(nodo.expresion)
@@ -185,6 +194,11 @@ class AnalizadorSemantico:
         elif isinstance(nodo, SentenciaRecuperar):
             self._inferir_tipo(nodo.accion_critica) if nodo.accion_critica else None
             self._inferir_tipo(nodo.plan_b) if nodo.plan_b else None
+        elif isinstance(nodo, BloqueInseguro):
+            self.tabla.entrar_scope()
+            for s in nodo.cuerpo:
+                self._analizar_sentencia(s)
+            self.tabla.salir_scope()
         elif isinstance(nodo, LogLlamada):
             for a in nodo.argumentos:
                 self._inferir_tipo(a)
@@ -289,16 +303,27 @@ class AnalizadorSemantico:
             return 'tensor'
         elif isinstance(nodo, ArgumentoTransferido):
             return self._inferir_tipo(nodo.expr)
+        elif isinstance(nodo, ExprObtenerDireccion):
+            tipo_base = self._inferir_tipo(nodo.expr)
+            if tipo_base:
+                return f"{tipo_base}*"
+            return None
+        elif isinstance(nodo, ExprDereferencia):
+            tipo_base = self._inferir_tipo(nodo.expr)
+            if tipo_base:
+                return tipo_base.rstrip('*')
+            return None
         elif isinstance(nodo, ExprAccesoCampo):
             tipo_obj = self._inferir_tipo(nodo.objeto)
             if tipo_obj is None:
                 return None
-            struct = self._estructuras.get(tipo_obj)
+            base_tipo = tipo_obj.rstrip('*')
+            struct = self._estructuras.get(base_tipo)
             if struct is None:
                 self.diag.reportar(
                     ErrorCodes.ERR_SEM_ESTRUCTURA_NO_DEFINIDA,
                     self._token(nodo.linea, nodo.columna),
-                    nombre=tipo_obj
+                    nombre=base_tipo
                 )
                 return None
             campo = next((c for c in struct.campos if c.nombre == nodo.nombre_campo), None)
@@ -306,7 +331,7 @@ class AnalizadorSemantico:
                 self.diag.reportar(
                     ErrorCodes.ERR_SEM_CAMPO_NO_EXISTE,
                     self._token(nodo.linea, nodo.columna),
-                    struct=tipo_obj, campo=nodo.nombre_campo
+                    struct=base_tipo, campo=nodo.nombre_campo
                 )
                 return None
             return campo.tipo

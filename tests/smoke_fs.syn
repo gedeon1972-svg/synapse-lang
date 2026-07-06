@@ -1,0 +1,12 @@
+#lang: es
+importar std.fs
+
+funcion principal() -> nulo:
+    log("Iniciando prueba de std.fs...")
+    a = abrir_archivo("test_fs_output.txt", "w")
+    log("Archivo creado, handle: ", a.handle)
+    r = escribir_archivo(a, "Synapse FS works!")
+    log("Bytes escritos: ", r)
+    r2 = cerrar_archivo(a)
+    log("Archivo cerrado, codigo: ", r2)
+    log("Prueba completada.")

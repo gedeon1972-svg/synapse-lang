@@ -147,3 +147,26 @@ estructura ArgumentoTransferido:
 estructura SentenciaImportar:
     tipo: texto
     ruta: texto
+
+estructura BloqueInseguro:
+    tipo: texto
+    cuerpo: ListaNodo
+
+estructura ExprObtenerDireccion:
+    tipo: texto
+    expr: Nodo
+
+estructura ExprDereferencia:
+    tipo: texto
+    expr: Nodo
+
+estructura ImportarC:
+    tipo: texto
+    ruta: texto
+    es_sistema: booleano
+
+estructura DeclaracionExterna:
+    tipo: texto
+    nombre: texto
+    parametros: ListaParametro
+    tipo_retorno: texto

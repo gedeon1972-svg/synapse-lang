@@ -518,6 +518,88 @@
         ]
       },
       {
+        "_tipo": "DefinicionEstructura",
+        "nombre": "BloqueInseguro",
+        "campos": [
+          {
+            "nombre": "tipo",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "cuerpo",
+            "tipo": "ListaNodo"
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionEstructura",
+        "nombre": "ExprObtenerDireccion",
+        "campos": [
+          {
+            "nombre": "tipo",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "expr",
+            "tipo": "Nodo"
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionEstructura",
+        "nombre": "ExprDereferencia",
+        "campos": [
+          {
+            "nombre": "tipo",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "expr",
+            "tipo": "Nodo"
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionEstructura",
+        "nombre": "ImportarC",
+        "campos": [
+          {
+            "nombre": "tipo",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "ruta",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "es_sistema",
+            "tipo": "booleano"
+          }
+        ]
+      },
+      {
+        "_tipo": "DefinicionEstructura",
+        "nombre": "DeclaracionExterna",
+        "campos": [
+          {
+            "nombre": "tipo",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "nombre",
+            "tipo": "texto"
+          },
+          {
+            "nombre": "parametros",
+            "tipo": "ListaParametro"
+          },
+          {
+            "nombre": "tipo_retorno",
+            "tipo": "texto"
+          }
+        ]
+      },
+      {
         "_tipo": "DefinicionFuncion",
         "nombre": "_expr_a_c",
         "parametros": [

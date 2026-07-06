@@ -8,6 +8,8 @@ from ast_nodes import (
     SentenciaExpr, AsignacionVariable, LogLlamada,
     OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
     LiteralNumero, LiteralDecimal, LiteralCadena, ExprTensor, ArgumentoTransferido,
+    BloqueInseguro, ExprObtenerDireccion, ExprDereferencia,
+    ImportarC, DeclaracionExterna,
 )
 
 
@@ -26,6 +28,9 @@ MAPA_TIPOS_C: dict[str, str] = {
     'cadena': 'CadenaSegura',
     'booleano': 'int',
     'logico': 'int',
+    'void': 'void',
+    'char': 'char',
+    'double': 'double',
 }
 
 
@@ -63,6 +68,7 @@ _RUNTIME_BUILTINS: frozenset = frozenset({
     'crear_tensor', 'suma_tensor', 'producto_punto', 'relu',
     'reserva', 'libera', 'suma', 'producto',
     'texto_a_entero', 'texto_a_decimal', 'decimal_a_texto',
+    'salir',
 })
 
 # Tabla de coerción: (tipo_origen, tipo_destino) -> funcion_coercion
@@ -110,9 +116,11 @@ class GeneradorC:
         self._strings_heap: set[str] = set()
         self._listener_funciones: List[str] = []
         self._gen_tok_emitido = False
+        self._externas: dict[str, List[str]] = {}
         self._gen_parse_emitido = False
         self._gen_defs_emitido = False
         self._estructuras: dict[str, list] = {}
+        self._func_return_types: dict[str, str] = {}
         self._in_function_scope = False
 
     def _push(self, linea: str = ""):
@@ -132,6 +140,10 @@ class GeneradorC:
 
     def generar(self) -> str:
         self._variables = {}
+        self._func_return_types = {}
+        for s in self.programa.sentencias:
+            if isinstance(s, DefinicionFuncion):
+                self._func_return_types[s.nombre] = s.tipo_retorno
         self._emitir_encabezado()
         # Builtins de sistema siempre presentes
         self._push("static int _g_argc;")
@@ -233,7 +245,8 @@ class GeneradorC:
         _ejecutables = (SentenciaSi, SentenciaLanzar, SentenciaRecuperar,
                         SentenciaRetornar, SentenciaEscuchar, SentenciaMientras,
                         SentenciaRomper, SentenciaSiguiente, SentenciaExpr,
-                        AsignacionVariable, LogLlamada, AsignacionCampo)
+                        AsignacionVariable, LogLlamada, AsignacionCampo,
+                        BloqueInseguro)
         if isinstance(nodo, _ejecutables) and not self._in_function_scope:
             raise SyntaxError(
                 f"Código ejecutable fuera de ámbito global (linea {getattr(nodo, 'linea', '?')})")
@@ -255,6 +268,13 @@ class GeneradorC:
             self._push("continue;")
         elif isinstance(nodo, SentenciaMientras):
             self._visitar_mientras(nodo)
+        elif isinstance(nodo, BloqueInseguro):
+            self._push("{ /* unsafe */")
+            self.indent += 1
+            for s in nodo.cuerpo:
+                self._visitar(s)
+            self.indent -= 1
+            self._push("}")
         elif isinstance(nodo, SentenciaExpr):
             self._push(self._expr_a_c(nodo.expr) + ";")
         elif isinstance(nodo, AsignacionVariable):
@@ -263,6 +283,14 @@ class GeneradorC:
             self._visitar_log(nodo)
         elif isinstance(nodo, DefinicionEstructura):
             self._visitar_estructura(nodo)
+        elif isinstance(nodo, ImportarC):
+            if nodo.es_sistema:
+                self._push(f'#include <{nodo.ruta}>')
+            else:
+                self._push(f'#include "{nodo.ruta}"')
+        elif isinstance(nodo, DeclaracionExterna):
+            self._externas[nodo.nombre] = [p.tipo for p in nodo.parametros]
+
         elif isinstance(nodo, AsignacionCampo):
             if not self._in_function_scope:
                 raise SyntaxError(
@@ -270,8 +298,8 @@ class GeneradorC:
             obj = self._expr_a_c(nodo.objeto)
             val = self._expr_a_c(nodo.expresion)
             obj_tipo = self._tipo_de_expr(nodo.objeto)
-            es_puntero = False
-            if obj_tipo.startswith('struct '):
+            es_puntero = obj_tipo.endswith('*')
+            if not es_puntero and obj_tipo.startswith('struct '):
                 nombre_struct = obj_tipo[7:]
                 info = self._estructuras.get(nombre_struct)
                 if info and nodo.nombre_campo in info.get('campos_pointer', set()):
@@ -363,6 +391,8 @@ class GeneradorC:
         self._push('if (strcmp(ruta.datos, "librerias/std/io.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_IO; _c.virtual_len = (int)strlen(LIB_IO); _c.es_valido = 1; return _c; }')
         self._push('if (strcmp(ruta.datos, "librerias/std/mem.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_MEM; _c.virtual_len = (int)strlen(LIB_MEM); _c.es_valido = 1; return _c; }')
         self._push('if (strcmp(ruta.datos, "librerias/std/math.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_MATH; _c.virtual_len = (int)strlen(LIB_MATH); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/std/fs.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_FS; _c.virtual_len = (int)strlen(LIB_FS); _c.es_valido = 1; return _c; }')
+        self._push('if (strcmp(ruta.datos, "librerias/std/sys.syn") == 0) { _c.es_virtual = 1; _c.virtual_data = LIB_SYS; _c.virtual_len = (int)strlen(LIB_SYS); _c.es_valido = 1; return _c; }')
         self._push("_c.stream = fopen(ruta.datos, modo.datos);")
         self._push("_c.es_valido = (_c.stream != NULL) ? 1 : 0;")
         self._push("if (!_c.es_valido) {")
@@ -659,16 +689,36 @@ class GeneradorC:
         self._push("strncpy(_buf_id, fuente.datos + _start, _clip); _buf_id[_clip] = 0;")
         self._push("_columna += _len_id;")
         self._push("_token_count++;")
-        self._push("if (strcmp(_buf_id, \"verdadero\") == 0 || strcmp(_buf_id, \"true\") == 0)")
-        self._push('    fprintf(stderr, "  TOKEN TRUE L%d:%d\\n", _linea, _columna);')
-        self._push("else if (strcmp(_buf_id, \"falso\") == 0 || strcmp(_buf_id, \"false\") == 0)")
-        self._push('    fprintf(stderr, "  TOKEN FALSE L%d:%d\\n", _linea, _columna);')
-        self._push("else if (strcmp(_buf_id, \"y\") == 0 || strcmp(_buf_id, \"and\") == 0)")
-        self._push('    fprintf(stderr, "  TOKEN AND L%d:%d\\n", _linea, _columna);')
-        self._push("else if (strcmp(_buf_id, \"o\") == 0 || strcmp(_buf_id, \"or\") == 0)")
-        self._push('    fprintf(stderr, "  TOKEN OR L%d:%d\\n", _linea, _columna);')
-        self._push("else if (strcmp(_buf_id, \"no\") == 0 || strcmp(_buf_id, \"not\") == 0)")
-        self._push('    fprintf(stderr, "  TOKEN NOT L%d:%d\\n", _linea, _columna);')
+        self._push("typedef struct { const char* p; int t; } _KWE;")
+        self._push("static const _KWE _kws[] = {")
+        self._push('    {"si",1},{"if",1},{"se",1},{"wenn",1},')
+        self._push('    {"sino",2},{"else",2},{"sinon",2},{"senao",2},{"sonst",2},{"altrimenti",2},')
+        self._push('    {"funcion",3},{"function",3},{"fonction",3},{"funcao",3},{"funktion",3},{"funzione",3},')
+        self._push('    {"retornar",4},{"return",4},{"retourner",4},{"rueckgabe",4},{"restituisci",4},')
+        self._push('    {"lanzar",5},{"spawn",5},{"lancer",5},{"lancar",5},{"starten",5},{"lancia",5},')
+        self._push('    {"recuperar",6},{"recover",6},{"recuperer",6},{"wiederherstellen",6},{"recupera",6},')
+        self._push('    {"escuchar",7},{"listen",7},{"ecouter",7},{"escutar",7},{"hoeren",7},{"ascolta",7},')
+        self._push('    {"mientras",8},{"while",8},{"tantque",8},{"enquanto",8},{"waehrend",8},{"mentre",8},')
+        self._push('    {"importar",9},{"import",9},{"importer",9},{"importieren",9},{"importa",9},')
+        self._push('    {"romper",10},{"break",10},{"rompre",10},{"parar",10},{"abbrechen",10},{"interrompi",10},')
+        self._push('    {"siguiente",11},{"continue",11},{"continuer",11},{"continuar",11},{"fortsetzen",11},{"continua",11},')
+        self._push('    {"estructura",37},{"struct",37},{"structure",37},{"estrutura",37},{"struktur",37},{"struttura",37},')
+        self._push('    {"y",38},{"and",38},{"et",38},{"e",38},{"und",38},')
+        self._push('    {"o",39},{"or",39},{"ou",39},{"oder",39},')
+        self._push('    {"no",40},{"not",40},{"non",40},{"nao",40},{"nicht",40},')
+        self._push('    {"verdadero",41},{"true",41},{"vrai",41},{"verdadeiro",41},{"wahr",41},{"vero",41},')
+        self._push('    {"falso",42},{"false",42},{"faux",42},{"falsch",42},')
+        self._push('    {"inseguro",43},{"unsafe",43},')
+        self._push('    {"importar_c",44},{"import_c",44},{"importer_c",44},{"importa_c",44},')
+        self._push('    {"externo",46},{"extern",46},{"externe",46},{"esterno",46},')
+        self._push("    {NULL,0}")
+        self._push("};")
+        self._push("int _kt = 0;")
+        self._push("for (int _ki = 0; _kws[_ki].p; _ki++) {")
+        self._push("    if (strcmp(_buf_id, _kws[_ki].p) == 0) { _kt = _kws[_ki].t; break; }")
+        self._push("}")
+        self._push("if (_kt)")
+        self._push('    fprintf(stderr, "  TOKEN %d L%d:%d\\n", _kt, _linea, _columna);')
         self._push("else")
         self._push('    fprintf(stderr, "  TOKEN IDENTIFIER L%d:%d\\n", _linea, _columna);')
         self.indent -= 1
@@ -736,6 +786,10 @@ class GeneradorC:
             "#define T_NOT 40",
             "#define T_TRUE 41",
             "#define T_FALSE 42",
+            "#define T_INSEGURO 43",
+            "#define T_IMPORTAR_C 44",
+            "#define T_AMPERSAND 45",
+            "#define T_EXTERNO 46",
             "",
             "#define MAX_TOKS 16384",
             "typedef struct { int tipo; int linea; int col; char val[256]; } _P_Token;",
@@ -823,24 +877,35 @@ class GeneradorC:
 "            int vl = (i - st) < 255 ? (i - st) : 255;",
 "            strncpy(" + P + "tks[" + P + "ntks].val, s + st, vl); " + P + "tks[" + P + "ntks].val[vl] = 0;",
 "            " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = scol;",
-            '            if (strcmp(' + P + 'tks[' + P + 'ntks].val, "si") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "if") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_IF;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "sino") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "else") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_ELSE;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "funcion") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "function") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_FUNC;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "retornar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "return") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_RET;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "lanzar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "spawn") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_SPAWN;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "recuperar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "recover") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_RECOVER;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "escuchar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "listen") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_LISTEN;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "mientras") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "while") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_WHILE;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "importar") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "import") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_IMPORT;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "romper") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "break") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_BREAK;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "siguiente") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "continue") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_CONTINUE;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "estructura") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "structure") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_STRUCT;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "y") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "and") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_AND;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "o") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "or") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_OR;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "no") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "not") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_NOT;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "verdadero") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "true") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_TRUE;',
-            '            else if (strcmp(' + P + 'tks[' + P + 'ntks].val, "falso") == 0 || strcmp(' + P + 'tks[' + P + 'ntks].val, "false") == 0) ' + P + 'tks[' + P + 'ntks].tipo = T_FALSE;',
-            '            else { ' + P + 'tks[' + P + 'ntks].tipo = T_IDENT; }',
+            '            typedef struct { const char* p; int t; } _KW;',
+            '            static const _KW _ks[] = {',
+            '                {"si",T_IF},{"if",T_IF},{"se",T_IF},{"wenn",T_IF},',
+            '                {"sino",T_ELSE},{"else",T_ELSE},{"sinon",T_ELSE},{"senao",T_ELSE},{"sonst",T_ELSE},{"altrimenti",T_ELSE},',
+            '                {"funcion",T_FUNC},{"function",T_FUNC},{"fonction",T_FUNC},{"funcao",T_FUNC},{"funktion",T_FUNC},{"funzione",T_FUNC},',
+            '                {"retornar",T_RET},{"return",T_RET},{"retourner",T_RET},{"retornar",T_RET},{"rueckgabe",T_RET},{"restituisci",T_RET},',
+            '                {"lanzar",T_SPAWN},{"spawn",T_SPAWN},{"lancer",T_SPAWN},{"lancar",T_SPAWN},{"starten",T_SPAWN},{"lancia",T_SPAWN},',
+            '                {"recuperar",T_RECOVER},{"recover",T_RECOVER},{"recuperer",T_RECOVER},{"recuperar",T_RECOVER},{"wiederherstellen",T_RECOVER},{"recupera",T_RECOVER},',
+            '                {"escuchar",T_LISTEN},{"listen",T_LISTEN},{"ecouter",T_LISTEN},{"escutar",T_LISTEN},{"hoeren",T_LISTEN},{"ascolta",T_LISTEN},',
+            '                {"mientras",T_WHILE},{"while",T_WHILE},{"tantque",T_WHILE},{"enquanto",T_WHILE},{"waehrend",T_WHILE},{"mentre",T_WHILE},',
+            '                {"importar",T_IMPORT},{"import",T_IMPORT},{"importer",T_IMPORT},{"importar",T_IMPORT},{"importieren",T_IMPORT},{"importa",T_IMPORT},',
+            '                {"romper",T_BREAK},{"break",T_BREAK},{"rompre",T_BREAK},{"parar",T_BREAK},{"abbrechen",T_BREAK},{"interrompi",T_BREAK},',
+            '                {"siguiente",T_CONTINUE},{"continue",T_CONTINUE},{"continuer",T_CONTINUE},{"continuar",T_CONTINUE},{"fortsetzen",T_CONTINUE},{"continua",T_CONTINUE},',
+            '                {"estructura",T_STRUCT},{"struct",T_STRUCT},{"structure",T_STRUCT},{"estrutura",T_STRUCT},{"struktur",T_STRUCT},{"struttura",T_STRUCT},',
+            '                {"y",T_AND},{"and",T_AND},{"et",T_AND},{"e",T_AND},{"und",T_AND},',
+            '                {"o",T_OR},{"or",T_OR},{"ou",T_OR},{"oder",T_OR},',
+            '                {"no",T_NOT},{"not",T_NOT},{"non",T_NOT},{"nao",T_NOT},{"nicht",T_NOT},',
+            '                {"verdadero",T_TRUE},{"true",T_TRUE},{"vrai",T_TRUE},{"verdadeiro",T_TRUE},{"wahr",T_TRUE},{"vero",T_TRUE},',
+            '                {"falso",T_FALSE},{"false",T_FALSE},{"faux",T_FALSE},{"falsch",T_FALSE},',
+            '                {"inseguro",T_INSEGURO},{"unsafe",T_INSEGURO},',
+            '                {"importar_c",T_IMPORTAR_C},{"import_c",T_IMPORTAR_C},{"importer_c",T_IMPORTAR_C},{"importa_c",T_IMPORTAR_C},',
+            '                {"externo",T_EXTERNO},{"extern",T_EXTERNO},{"externe",T_EXTERNO},{"esterno",T_EXTERNO},',
+            '                {NULL,0}',
+            '            };',
+            '            int _kt = T_IDENT;',
+            '            for (int _ki = 0; _ks[_ki].p; _ki++) {',
+            '                if (strcmp(' + P + 'tks[' + P + 'ntks].val, _ks[_ki].p) == 0) { _kt = _ks[_ki].t; break; }',
+            '            }',
+            '            ' + P + 'tks[' + P + 'ntks].tipo = _kt;',
             "            " + P + "ntks++; co += (i - st); continue;",
             "        }",
             "        if ((unsigned char)c >= 0x80) { i++; continue; }",
@@ -881,6 +946,8 @@ class GeneradorC:
             "            else if (c == '.') tt = T_DOT;",
             "            else if (c == '>') tt = T_GT;",
             "            else if (c == '<') tt = T_LT;",
+            "            else if (c == '&') tt = T_AMPERSAND;",
+            "            if (tt == T_EOF) { fprintf(stderr,\"Error Lexico: caracter inesperado '%%c'(%%d) en linea %%d\\n\",c,c,li); exit(1); }",
             "            " + P + "tks[" + P + "ntks].tipo = tt; " + P + "tks[" + P + "ntks].linea = li; " + P + "tks[" + P + "ntks].col = co;",
             "            " + P + "ntks++; i++; co++;",
             "        }",
@@ -988,6 +1055,7 @@ static struct Nodo* """ + _P + """sentencia() {
                 if (""" + _P + """mirar()->tipo != T_IDENT) break;
                 char _pt[256]; strcpy(_pt, """ + _P + """mirar()->val);
                 """ + _P + """avanzar();
+                while (""" + _P + """mirar()->tipo == T_MUL) { strcat(_pt,"*"); """ + _P + """avanzar(); }
                 struct Parametro* pp = (struct Parametro*)calloc(1,sizeof(struct Parametro));
                 pp->tipo=""" + _P + """cs("Parametro");
                 pp->nombre=""" + _P + """cs(_pn); pp->tipo_param=""" + _P + """cs(_pt);
@@ -1107,6 +1175,58 @@ static struct Nodo* """ + _P + """sentencia() {
         n->tipo=""" + _P + """cs("SentenciaImportar"); n->ruta=""" + _P + """cs(_imp);
         return (struct Nodo*)n;
     }
+    if (t->tipo == T_IMPORTAR_C) { """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo != T_STR) { """ + _P + """sinc_skip(); return NULL; }
+        char _hc[256]; strcpy(_hc, """ + _P + """mirar()->val);
+        int _hsys = (_hc[0]=='<' && _hc[strlen(_hc)-1]=='>');
+        if(_hsys){{ memmove(_hc,_hc+1,strlen(_hc)-2); _hc[strlen(_hc)-2]=0; }}
+        """ + _P + """avanzar();
+        struct ImportarC* n = (struct ImportarC*)calloc(1,sizeof(struct ImportarC));
+        n->tipo=""" + _P + """cs("ImportarC"); n->ruta=""" + _P + """cs(_hc); n->es_sistema=_hsys;
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_EXTERNO) { """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo != T_FUNC) { """ + _P + """sinc_skip(); return NULL; }
+        """ + _P + """avanzar();
+        if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); return NULL; }
+        char _enm[256]; strcpy(_enm, """ + _P + """mirar()->val);
+        """ + _P + """avanzar();
+        """ + _P + """esperar(T_LPAREN);
+        struct ListaParametro* eparams = NULL;
+        struct ListaParametro** epcur = &eparams;
+        if (""" + _P + """mirar()->tipo != T_RPAREN) {
+            while (1) {
+                if (""" + _P + """mirar()->tipo != T_IDENT) break;
+                char _epn[256]; strcpy(_epn, """ + _P + """mirar()->val);
+                """ + _P + """avanzar();
+                """ + _P + """esperar(T_COLON);
+                if (""" + _P + """mirar()->tipo != T_IDENT) break;
+                char _ept[256]; strcpy(_ept, """ + _P + """mirar()->val);
+                """ + _P + """avanzar();
+                while (""" + _P + """mirar()->tipo == T_MUL) { strcat(_ept,"*"); """ + _P + """avanzar(); }
+                struct Parametro* epp=(struct Parametro*)calloc(1,sizeof(struct Parametro));
+                epp->tipo=""" + _P + """cs("Parametro"); epp->nombre=""" + _P + """cs(_epn); epp->tipo_param=""" + _P + """cs(_ept); epp->es_transferencia=0;
+                *epcur=(struct ListaParametro*)""" + _P + """mk_list((struct Nodo*)epp,NULL); epcur=&(*epcur)->cola;
+                if (""" + _P + """mirar()->tipo != T_COMMA) break;
+                """ + _P + """avanzar();
+            }
+        }
+        """ + _P + """esperar(T_RPAREN); """ + _P + """esperar(T_ARROW);
+        if (""" + _P + """mirar()->tipo != T_IDENT) { """ + _P + """sinc_skip(); return NULL; }
+        char _ert[256]; strcpy(_ert, """ + _P + """mirar()->val);
+        """ + _P + """avanzar();
+        struct DeclaracionExterna* n = (struct DeclaracionExterna*)calloc(1,sizeof(struct DeclaracionExterna));
+        n->tipo=""" + _P + """cs("DeclaracionExterna"); n->nombre=""" + _P + """cs(_enm);
+        n->parametros=eparams; n->tipo_retorno=""" + _P + """cs(_ert);
+        return (struct Nodo*)n;
+    }
+    if (t->tipo == T_INSEGURO) { """ + _P + """avanzar();
+        """ + _P + """esperar(T_COLON);
+        struct ListaNodo* cpo=""" + _P + """bloque();
+        struct BloqueInseguro* n = (struct BloqueInseguro*)calloc(1,sizeof(struct BloqueInseguro));
+        n->tipo=""" + _P + """cs("BloqueInseguro"); n->cuerpo=cpo;
+        return (struct Nodo*)n;
+    }
     if (t->tipo == T_IDENT && """ + _P + """tpos + 1 < """ + _P + """ntks && """ + _P + """tks[""" + _P + """tpos + 1].tipo == T_ASSIGN) {
         char _vn[256]; strcpy(_vn, t->val);
         """ + _P + """avanzar(); """ + _P + """avanzar();
@@ -1220,6 +1340,20 @@ static struct Nodo* """ + _P + """una() {
         n->tipo=""" + _P + """cs("OpUnaria"); n->expr=e;
         n->operador=(struct Token*)calloc(1,sizeof(struct Token)); n->operador->tipo=tt; n->operador->linea=0; n->operador->columna=0;
         n->operador->lexema=""" + _P + """cs("!");
+        return (struct Nodo*)n;
+    }
+    if (""" + _P + """mirar()->tipo==T_AMPERSAND) {
+        """ + _P + """avanzar();
+        struct Nodo* e=""" + _P + """una();
+        struct ExprObtenerDireccion* n=(struct ExprObtenerDireccion*)calloc(1,sizeof(struct ExprObtenerDireccion));
+        n->tipo=""" + _P + """cs("ExprObtenerDireccion"); n->expr=e;
+        return (struct Nodo*)n;
+    }
+    if (""" + _P + """mirar()->tipo==T_MUL) {
+        """ + _P + """avanzar();
+        struct Nodo* e=""" + _P + """una();
+        struct ExprDereferencia* n=(struct ExprDereferencia*)calloc(1,sizeof(struct ExprDereferencia));
+        n->tipo=""" + _P + """cs("ExprDereferencia"); n->expr=e;
         return (struct Nodo*)n;
     }
     return """ + _P + """prim();
@@ -1350,6 +1484,9 @@ static char {_PH}vn[1024][64];
 static char {_PH}vt[1024][64];
 static int {_PH}nv = 0;
 static char {_PH}ret_type[64];
+static char {_PH}extern_names[64][64];
+static char {_PH}extern_params[64][256];
+static int {_PH}nextern = 0;
 
 static void {_PH}reset() {{ {_PH}nv = 0; }}
 static int {_PH}find(const char* n) {{ for(int i=0;i<{_PH}nv;i++) if(strcmp({_PH}vn[i],n)==0) return i; return -1; }}
@@ -1393,6 +1530,8 @@ static const char* {_PH}tex(struct Nodo* n) {{
     }}
     if(strcmp(t,"ExprAccesoCampo")==0||strcmp(t,"ArgumentoTransferido")==0) return "int";
     if(strcmp(t,"ExprTensor")==0) return "Tensor";
+    if(strcmp(t,"ExprObtenerDireccion")==0) return "int*";
+    if(strcmp(t,"ExprDereferencia")==0) return "int";
     return "int";
 }}
 
@@ -1400,6 +1539,23 @@ static void {_PH}ea(struct Nodo* n, char* b, int sz);
 static void {_PH}vl(struct ListaNodo* l);
 static void {_PH}v(struct Nodo* n);
 
+static int {_PH}extern_needs_datos(const char* fn, int argidx) {{
+    for(int _ei=0;_ei<{_PH}nextern;_ei++){{
+        if(strcmp({_PH}extern_names[_ei],fn)==0){{
+            int _ec=0,_epos=0;
+            char _eb[256]; strcpy(_eb,{_PH}extern_params[_ei]);
+            while(_eb[_epos]){{
+                int _estart=_epos;
+                while(_eb[_epos]&&_eb[_epos]!=',') _epos++;
+                _eb[_epos]=0;
+                if(_ec==argidx) return strcmp(_eb+_estart,"char*")==0;
+                _ec++; _epos++;
+            }}
+            return 0;
+        }}
+    }}
+    return 0;
+}}
 static void {_PH}vl(struct ListaNodo* l) {{ while(l){{ {_PH}v(l->cabeza); l=l->cola; }} }}
 
 static void {_PH}ea(struct Nodo* n, char* b, int sz) {{
@@ -1415,21 +1571,25 @@ static void {_PH}ea(struct Nodo* n, char* b, int sz) {{
         struct LlamadaFuncion* x=(struct LlamadaFuncion*)n; {_PH}cp(m,x->nombre);
         {{ char* _p=m; while(*_p){{ if(*_p=='.') *_p='_'; _p++; }} }}
         int _coer = (strcmp(m,"escribir")==0||strcmp(m,"escribir_linea")==0||strcmp(m,"abrir")==0||strcmp(m,"concat")==0);
-        char a[4096]=""; int p=0; struct ListaNodo* c=x->argumentos;
+        char a[4096]=""; int p=0; int aidx=0; struct ListaNodo* c=x->argumentos;
         while(c){{ if(p>0){{ a[p++]=','; a[p++]=' '; }}
             {_PH}ea(c->cabeza,i,512);
+            int _dos = {_PH}extern_needs_datos(m,aidx);
+            if(_dos){{ snprintf(o,sizeof(o),"(%s).datos",i); strcpy(i,o); }}
             if(_coer){{ const char* _at = {_PH}tex(c->cabeza);
                 if(strcmp(_at,"int")==0){{ char _w[1024]; snprintf(_w,sizeof(_w),"entero_a_texto(%s)",i); int k=0; while(_w[k]) a[p++]=_w[k++]; }}
                 else if(strcmp(_at,"float")==0){{ char _w[1024]; snprintf(_w,sizeof(_w),"decimal_a_texto(%s)",i); int k=0; while(_w[k]) a[p++]=_w[k++]; }}
                 else{{ int k=0; while(i[k]) a[p++]=i[k++]; }}
             }}else{{ int k=0; while(i[k]) a[p++]=i[k++]; }}
-            c=c->cola;
+            c=c->cola; aidx++;
         }}
         a[p]=0; snprintf(b,sz,"%s(%s)",m,a); return;
     }}
-    if(strcmp(t,"ExprAccesoCampo")==0){{ struct ExprAccesoCampo* x=(struct ExprAccesoCampo*)n; {_PH}ea(x->objeto,o,512); {_PH}cp(m,x->nombre_campo); snprintf(b,sz,"%s.%s",o,m); return; }}
+    if(strcmp(t,"ExprAccesoCampo")==0){{ struct ExprAccesoCampo* x=(struct ExprAccesoCampo*)n; {_PH}ea(x->objeto,o,512); {_PH}cp(m,x->nombre_campo); const char* _ot={_PH}tex(x->objeto); int _isp=(strlen(_ot)>0&&_ot[strlen(_ot)-1]=='*'); snprintf(b,sz,"%s%s%s",o,_isp?"->":".",m); return; }}
     if(strcmp(t,"ExprTensor")==0){{ struct ExprTensor* x=(struct ExprTensor*)n; {_PH}ea(x->filas,i,512); {_PH}ea(x->columnas,d,512); snprintf(b,sz,"(Tensor){{.filas=%s,.columnas=%s,.datos=(float*)calloc(%s*%s,sizeof(float))}}",i,d,i,d); return; }}
     if(strcmp(t,"ArgumentoTransferido")==0){{ struct ArgumentoTransferido* x=(struct ArgumentoTransferido*)n; {_PH}ea(x->expr,b,sz); return; }}
+    if(strcmp(t,"ExprObtenerDireccion")==0){{ struct ExprObtenerDireccion* x=(struct ExprObtenerDireccion*)n; {_PH}ea(x->expr,i,512); snprintf(b,sz,"(&%s)",i); return; }}
+    if(strcmp(t,"ExprDereferencia")==0){{ struct ExprDereferencia* x=(struct ExprDereferencia*)n; {_PH}ea(x->expr,i,512); snprintf(b,sz,"(*%s)",i); return; }}
     snprintf(b,sz,"/*?*/");
 }}
 
@@ -1446,14 +1606,25 @@ static void {_PH}v_log(struct LogLlamada* n) {{
 }}
 
 static const char* {_PH}mt(const char* st) {{
-    if(strcmp(st,"entero")==0||strcmp(st,"int")==0) return "int";
-    if(strcmp(st,"texto")==0||strcmp(st,"cadena")==0) return "CadenaSegura";
-    if(strcmp(st,"nulo")==0||strcmp(st,"vacio")==0) return "void";
-    if(strcmp(st,"decimal")==0||strcmp(st,"real")==0) return "float";
-    if(strcmp(st,"logico")==0||strcmp(st,"booleano")==0) return "int";
-    if(strcmp(st,"Canal")==0||strcmp(st,"canal")==0) return "Canal";
-    if(strcmp(st,"Tensor")==0||strcmp(st,"tensor")==0) return "Tensor";
-    return NULL;
+    static char _mtb[64];
+    char _base[64]; strcpy(_base,st);
+    int _mlen = strlen(_base);
+    int _isptr = (_mlen>0 && _base[_mlen-1]=='*');
+    if(_isptr) _base[_mlen-1]=0;
+    const char* _r=NULL;
+    if(strcmp(_base,"entero")==0||strcmp(_base,"int")==0) _r="int";
+    else if(strcmp(_base,"texto")==0||strcmp(_base,"cadena")==0) _r="CadenaSegura";
+    else if(strcmp(_base,"nulo")==0||strcmp(_base,"vacio")==0) _r="void";
+    else if(strcmp(_base,"decimal")==0||strcmp(_base,"real")==0) _r="float";
+    else if(strcmp(_base,"logico")==0||strcmp(_base,"booleano")==0) _r="int";
+    else if(strcmp(_base,"Canal")==0||strcmp(_base,"canal")==0) _r="Canal";
+    else if(strcmp(_base,"Tensor")==0||strcmp(_base,"tensor")==0) _r="Tensor";
+    else if(strcmp(_base,"void")==0) _r="void";
+    else if(strcmp(_base,"char")==0) _r="char";
+    else if(strcmp(_base,"double")==0) _r="double";
+    if(!_r) return NULL;
+    if(_isptr){{ snprintf(_mtb,sizeof(_mtb),"%s*",_r); return _mtb; }}
+    return _r;
 }}
 static void {_PH}vest(struct DefinicionEstructura* n) {{
     char ln[4096];
@@ -1511,7 +1682,8 @@ static void {_PH}v(struct Nodo* n) {{
     }}
     if(strcmp(t,"AsignacionCampo")==0){{
         struct AsignacionCampo* a=(struct AsignacionCampo*)n; {_PH}ea(a->objeto,b,4096); {_PH}cp(m,a->nombre_campo); {_PH}ea(a->expresion,v,4096);
-        snprintf(b2,sizeof(b2),"%s.%s = %s;",b,m,v); {_PH}emit(b2); return;
+        const char* _ot={_PH}tex(a->objeto); int _isp=(strlen(_ot)>0&&_ot[strlen(_ot)-1]=='*');
+        snprintf(b2,sizeof(b2),"%s%s%s = %s;",b,_isp?"->":".",m,v); {_PH}emit(b2); return;
     }}
     if(strcmp(t,"SentenciaRetornar")==0){{
         struct SentenciaRetornar* r=(struct SentenciaRetornar*)n;
@@ -1530,6 +1702,27 @@ static void {_PH}v(struct Nodo* n) {{
     if(strcmp(t,"SentenciaEscuchar")==0){{ struct SentenciaEscuchar* e=(struct SentenciaEscuchar*)n; {_PH}ea(e->canal,b,4096); {_PH}ea(e->respuesta,v,4096); snprintf(b2,sizeof(b2),"/* escuchar: %s -> %s */",b,v); {_PH}emit(b2); return; }}
     if(strcmp(t,"DefinicionEstructura")==0){{ {_PH}vest((struct DefinicionEstructura*)n); return; }}
     if(strcmp(t,"SentenciaImportar")==0){{ struct SentenciaImportar* i=(struct SentenciaImportar*)n; {_PH}cp(b,i->ruta); snprintf(b2,sizeof(b2),"/* importar %s */",b); {_PH}emit(b2); return; }}
+    if(strcmp(t,"ImportarC")==0){{ struct ImportarC* x=(struct ImportarC*)n; {_PH}cp(m,x->ruta); if(x->es_sistema){{ snprintf(b,sizeof(b),"#include <%s>",m); }}else{{ snprintf(b,sizeof(b),"#include \\"%s\\"",m); }} {_PH}emit(b); return; }}
+    if(strcmp(t,"DeclaracionExterna")==0){{
+        struct DeclaracionExterna* x=(struct DeclaracionExterna*)n;
+        char _enm[256]; {_PH}cp(_enm,x->nombre);
+        strcpy({_PH}extern_names[{_PH}nextern],_enm);
+        char _ebuf[256]=""; int _ep=0;
+        struct ListaParametro* _epc=(struct ListaParametro*)x->parametros;
+        while(_epc){{
+            struct Parametro* p=(struct Parametro*)_epc->cabeza;
+            if(_ep>0){{ _ebuf[_ep++]=','; }}
+            char _ept[256]; {_PH}cp(_ept,p->tipo_param);
+            int _ek=0; while(_ept[_ek]) _ebuf[_ep++]=_ept[_ek++];
+            _epc=_epc->cola;
+        }}
+        _ebuf[_ep]=0;
+        strcpy({_PH}extern_params[{_PH}nextern],_ebuf);
+        {_PH}nextern++;
+        /* C declaration comes from #include via importar_c */
+        return;
+    }}
+    if(strcmp(t,"BloqueInseguro")==0){{ struct BloqueInseguro* x=(struct BloqueInseguro*)n; {_PH}emit("{{ /* unsafe */"); {_PH}indent++; {_PH}vl(x->cuerpo); {_PH}indent--; {_PH}emit("}}"); return; }}
     {_PH}emit("/* ??? */");
 }}
 
@@ -1793,7 +1986,7 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
         if isinstance(nodo, ArgumentoTransferido):
             return self._tipo_de_expr(nodo.expr)
         if isinstance(nodo, ExprAccesoCampo):
-            obj_tipo = self._tipo_de_expr(nodo.objeto)
+            obj_tipo = self._tipo_de_expr(nodo.objeto).rstrip('*')
             if obj_tipo.startswith('struct '):
                 nombre_struct = obj_tipo[7:]
                 info = self._estructuras.get(nombre_struct)
@@ -1815,11 +2008,23 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
             if tipo_in == 'float':
                 return 'float'
             return 'int'
+        if isinstance(nodo, ExprObtenerDireccion):
+            return f"{self._tipo_de_expr(nodo.expr)}*"
+        if isinstance(nodo, ExprDereferencia):
+            return self._tipo_de_expr(nodo.expr).rstrip('*')
         if isinstance(nodo, LlamadaFuncion):
             if nodo.nombre in _BUILTINS:
                 return _BUILTINS[nodo.nombre]
             if nodo.nombre in self._estructuras:
                 return f'struct {nodo.nombre}'
+            if nodo.nombre in self._func_return_types:
+                tipo = self._func_return_types[nodo.nombre]
+                if tipo in ('nulo', 'vacio', 'void'):
+                    return 'void'
+                tipo_c = MAPA_TIPOS_C.get(tipo)
+                if tipo_c is not None:
+                    return tipo_c
+                return f'struct {tipo}'
             return self._variables.get(nodo.nombre, 'int')
         if isinstance(nodo, AsignacionVariable):
             return self._tipo_de_expr(nodo.expresion)
@@ -1843,7 +2048,7 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
         self.indent -= 1
         self._push("}")
 
-    def _expr_a_c(self, nodo: Nodo) -> str:
+    def _expr_a_c(self, nodo: Nodo, ctx_func: str = '') -> str:
         if isinstance(nodo, LiteralNumero):
             return str(nodo.valor)
         if isinstance(nodo, LiteralDecimal):
@@ -1861,7 +2066,8 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
             if nodo.nombre in self._estructuras and not nodo.argumentos:
                 return f"{nodo.nombre}_nuevo()"
             args_parts = []
-            for a in nodo.argumentos:
+            extern_params = self._externas.get(nodo.nombre, [])
+            for i, a in enumerate(nodo.argumentos):
                 if isinstance(a, ArgumentoTransferido):
                     if isinstance(a.expr, Identificador):
                         self._tensor_vars_transferidas.add(a.expr.nombre)
@@ -1869,6 +2075,12 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
                             self._canal_vars_cerradas.add(a.expr.nombre)
                     arg_expr = self._expr_a_c(a.expr)
                     tipo_arg = self._tipo_de_expr(a.expr)
+                    if i < len(extern_params) and extern_params[i] == 'char*' and tipo_arg == 'CadenaSegura':
+                        arg_expr = f"({arg_expr}).datos"
+                    elif i < len(extern_params) and extern_params[i].endswith('*') and tipo_arg.startswith('struct '):
+                        ep_base = extern_params[i].rstrip('*')
+                        if MAPA_TIPOS_C.get(ep_base) is None and not tipo_arg.endswith('*'):
+                            arg_expr = f"(&{arg_expr})"
                     if nodo.nombre in _FUNCIONES_ESPERAN_TEXTO:
                         try:
                             arg_expr = _aplicar_coercion(arg_expr, tipo_arg, 'CadenaSegura', getattr(nodo, 'linea', 0))
@@ -1878,6 +2090,12 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
                 else:
                     arg_expr = self._expr_a_c(a)
                     tipo_arg = self._tipo_de_expr(a)
+                    if i < len(extern_params) and extern_params[i] == 'char*' and tipo_arg == 'CadenaSegura':
+                        arg_expr = f"({arg_expr}).datos"
+                    elif i < len(extern_params) and extern_params[i].endswith('*') and tipo_arg.startswith('struct '):
+                        ep_base = extern_params[i].rstrip('*')
+                        if MAPA_TIPOS_C.get(ep_base) is None and not tipo_arg.endswith('*'):
+                            arg_expr = f"(&{arg_expr})"
                     if nodo.nombre in _FUNCIONES_ESPERAN_TEXTO:
                         try:
                             arg_expr = _aplicar_coercion(arg_expr, tipo_arg, 'CadenaSegura', getattr(nodo, 'linea', 0))
@@ -1892,8 +2110,8 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
         if isinstance(nodo, ExprAccesoCampo):
             obj = self._expr_a_c(nodo.objeto)
             obj_tipo = self._tipo_de_expr(nodo.objeto)
-            es_puntero = False
-            if obj_tipo.startswith('struct '):
+            es_puntero = obj_tipo.endswith('*')
+            if not es_puntero and obj_tipo.startswith('struct '):
                 nombre_struct = obj_tipo[7:]
                 info = self._estructuras.get(nombre_struct)
                 if info and nodo.nombre_campo in info.get('campos_pointer', set()):
@@ -1906,4 +2124,8 @@ int generar(struct Programa programa, CadenaSegura ruta) {{
             return f"({izq} {nodo.operador} {der})"
         if isinstance(nodo, OpUnaria):
             return f"({nodo.operador}{self._expr_a_c(nodo.expr)})"
+        if isinstance(nodo, ExprObtenerDireccion):
+            return f"(&{self._expr_a_c(nodo.expr)})"
+        if isinstance(nodo, ExprDereferencia):
+            return f"(*{self._expr_a_c(nodo.expr)})"
         return "/* error en traduccion */"

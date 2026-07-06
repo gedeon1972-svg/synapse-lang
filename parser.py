@@ -9,6 +9,8 @@ from ast_nodes import (
     SentenciaRomper, SentenciaSiguiente,
     OpBinaria, OpUnaria, LlamadaFuncion, Identificador,
     LiteralNumero, LiteralDecimal, LiteralCadena, ExprTensor, ArgumentoTransferido,
+    BloqueInseguro, ExprObtenerDireccion, ExprDereferencia, TipoPuntero,
+    ImportarC, DeclaracionExterna,
 )
 from lexer import OPERADORES_BINARIOS
 from diagnostics import DiagnosticManager, ErrorCodes
@@ -87,8 +89,14 @@ class Parser:
             return self._parsear_romper()
         elif t.tipo == TokenID.CONTINUE:
             return self._parsear_siguiente()
+        elif t.tipo == TokenID.INSEGURO:
+            return self._parsear_inseguro()
+        elif t.tipo == TokenID.IMPORTAR_C:
+            return self._parsear_importar_c()
         elif t.tipo == TokenID.IMPORT:
             return self._parsear_importar()
+        elif t.tipo == TokenID.EXTERNO:
+            return self._parsear_declaracion_externa()
         elif t.tipo == TokenID.INDENT:
             return None
         elif t.tipo == TokenID.NEWLINE:
@@ -131,6 +139,9 @@ class Parser:
             self._esperar(TokenID.COLON)
             tok_tipo = self._esperar(TokenID.IDENTIFIER)
             tipo = tok_tipo.valor if tok_tipo else 'int'
+            if self._mirar().tipo == TokenID.STAR:
+                self._avanzar()
+                tipo += '*'
             params.append(Parametro(nombre=tok_nombre_param.valor, tipo=tipo, es_transferencia=es_trans))
             while self._mirar().tipo == TokenID.COMMA:
                 self._avanzar()
@@ -256,6 +267,85 @@ class Parser:
     def _parsear_siguiente(self) -> Optional[SentenciaSiguiente]:
         tok = self._avanzar()
         return SentenciaSiguiente(linea=tok.linea, columna=tok.columna)
+
+    def _parsear_inseguro(self) -> Optional[BloqueInseguro]:
+        if self._esperar(TokenID.INSEGURO) is None:
+            return None
+        if self._esperar(TokenID.COLON) is None:
+            return None
+        cuerpo = self._parsear_bloque() or []
+        return BloqueInseguro(cuerpo=cuerpo)
+
+    def _parsear_importar_c(self) -> Optional[ImportarC]:
+        if self._esperar(TokenID.IMPORTAR_C) is None:
+            return None
+        tok_ruta = self._esperar(TokenID.STRING)
+        if tok_ruta is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        ruta = tok_ruta.valor
+        es_sistema = ruta.startswith('<') and ruta.endswith('>')
+        if es_sistema:
+            ruta = ruta[1:-1]
+        return ImportarC(ruta=ruta, es_sistema=es_sistema)
+
+    def _parsear_declaracion_externa(self) -> Optional[DeclaracionExterna]:
+        if self._esperar(TokenID.EXTERNO) is None:
+            return None
+        if self._esperar(TokenID.FUNCTION) is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        tok_nombre = self._esperar(TokenID.IDENTIFIER)
+        if tok_nombre is None:
+            self._sincronizar(_SYNC_TOP)
+            return None
+        if self._esperar(TokenID.LPAREN) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        params: List[Parametro] = []
+        if self._mirar().tipo != TokenID.RPAREN:
+            es_trans = self._posible(TokenID.ARROW) is not None
+            tok_nombre_param = self._esperar(TokenID.IDENTIFIER)
+            if tok_nombre_param is None:
+                self._sincronizar(_SYNC_STMT)
+                return None
+            self._esperar(TokenID.COLON)
+            tok_tipo = self._esperar(TokenID.IDENTIFIER)
+            tipo = tok_tipo.valor if tok_tipo else 'int'
+            if self._mirar().tipo == TokenID.STAR:
+                self._avanzar()
+                tipo += '*'
+            params.append(Parametro(nombre=tok_nombre_param.valor, tipo=tipo, es_transferencia=es_trans))
+            while self._mirar().tipo == TokenID.COMMA:
+                self._avanzar()
+                es_trans = self._posible(TokenID.ARROW) is not None
+                tok_nombre_param = self._esperar(TokenID.IDENTIFIER)
+                if tok_nombre_param is None:
+                    break
+                self._esperar(TokenID.COLON)
+                tok_tipo = self._esperar(TokenID.IDENTIFIER)
+                tipo = tok_tipo.valor if tok_tipo else 'int'
+                if self._mirar().tipo == TokenID.STAR:
+                    self._avanzar()
+                    tipo += '*'
+                params.append(Parametro(nombre=tok_nombre_param.valor, tipo=tipo, es_transferencia=es_trans))
+        if self._esperar(TokenID.RPAREN) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        if self._esperar(TokenID.ARROW) is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        tok_retorno = self._esperar(TokenID.IDENTIFIER)
+        if tok_retorno is None:
+            self._sincronizar(_SYNC_STMT)
+            return None
+        return DeclaracionExterna(
+            nombre=tok_nombre.valor,
+            parametros=params,
+            tipo_retorno=tok_retorno.valor,
+            linea=tok_nombre.linea,
+            columna=tok_nombre.columna,
+        )
 
     def _parsear_importar(self) -> Optional[SentenciaImportar]:
         tok_import = self._esperar(TokenID.IMPORT)
@@ -400,6 +490,22 @@ class Parser:
             expr = self._parsear_unario()
             return OpUnaria(
                 operador='!',
+                expr=expr,
+                linea=t.linea,
+                columna=t.columna,
+            )
+        if t.tipo == TokenID.AMPERSAND:
+            self._avanzar()
+            expr = self._parsear_unario()
+            return ExprObtenerDireccion(
+                expr=expr,
+                linea=t.linea,
+                columna=t.columna,
+            )
+        if t.tipo == TokenID.STAR:
+            self._avanzar()
+            expr = self._parsear_unario()
+            return ExprDereferencia(
                 expr=expr,
                 linea=t.linea,
                 columna=t.columna,

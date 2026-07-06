@@ -1,8 +1,10 @@
 import os
 import shutil
 import stat
+import zipfile
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+VERSION = "v1.5.0"
 DIST_DIR = os.path.join(PROJECT_ROOT, "dist")
 
 def remove_readonly(func, path, excinfo):
@@ -53,11 +55,27 @@ def build():
     # Copy runtime headers (preserving relative structure for #include "librerias/...")
     lib_librerias = os.path.join(lib_dir, "librerias")
     shutil.copytree(os.path.join(PROJECT_ROOT, "librerias"), lib_librerias)
+    # Copy std library files
+    std_dir = os.path.join(lib_dir, "std")
+    shutil.copytree(os.path.join(PROJECT_ROOT, "std"), std_dir)
 
     # Generate install script
     generate_install_ps1(DIST_DIR)
 
+    # Create zip package for release
+    zip_name = f"synapse-{VERSION}-windows-x64.zip"
+    zip_path = os.path.join(DIST_DIR, zip_name)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(DIST_DIR):
+            for filename in files:
+                full_path = os.path.join(root, filename)
+                if full_path == zip_path:
+                    continue
+                rel_path = os.path.relpath(full_path, DIST_DIR)
+                zipf.write(full_path, rel_path)
+
     print(f"Distribucion generada en: {DIST_DIR}")
+    print(f"Paquete zip creado: {zip_path}")
 
 if __name__ == "__main__":
     build()

@@ -49,6 +49,10 @@ class TokenID(Enum):
     NEWLINE = auto()
     INDENT = auto()
     DEDENT = auto()
+    AMPERSAND = auto()
+    INSEGURO = auto()
+    IMPORTAR_C = auto()
+    EXTERNO = auto()
 
     EOF = auto()
 
@@ -196,6 +200,33 @@ class LogLlamada(Nodo):
 @dataclass
 class SentenciaImportar(Nodo):
     ruta: str = ''
+
+@dataclass
+class BloqueInseguro(Nodo):
+    cuerpo: List[Nodo] = field(default_factory=list)
+
+@dataclass
+class ExprObtenerDireccion(Nodo):
+    expr: Optional[Nodo] = None
+
+@dataclass
+class ExprDereferencia(Nodo):
+    expr: Optional[Nodo] = None
+
+@dataclass
+class TipoPuntero:
+    tipo_base: str = ''
+
+@dataclass
+class ImportarC(Nodo):
+    ruta: str = ''
+    es_sistema: bool = False
+
+@dataclass
+class DeclaracionExterna(Nodo):
+    nombre: str = ''
+    parametros: List[Parametro] = field(default_factory=list)
+    tipo_retorno: str = ''
 
 
 @dataclass

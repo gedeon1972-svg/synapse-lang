@@ -469,6 +469,25 @@ class TestGeneradorCEstructuras:
         codigo = generador.generar()
         
         assert ".a =" in codigo
+    
+    def test_acceso_campo_pointer_con_flecha(self):
+        """Test que acceso a campo via puntero emite ->"""
+        fuente = "#lang: es\nestructura Punto:\n    a: int\n    b: int\nfuncion f() -> int:\n    inseguro:\n        p = Punto()\n        ptr = &p\n        ptr.a = 10\n        retornar ptr.a"
+        lexer = Lexer(fuente)
+        tokens = lexer.tokenizar()
+        diag = DiagnosticManager()
+        parser = Parser(tokens, diag)
+        prog = parser.parsear()
+        
+        analizador = AnalizadorSemantico(prog, diag)
+        analizador.analizar()
+        
+        generador = GeneradorC(prog)
+        codigo = generador.generar()
+        
+        assert "->a = 10" in codigo
+        assert "return ptr->a" in codigo
+        assert "ptr->a" in codigo
 
 
 class TestGeneradorCTipos:

@@ -21,6 +21,9 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'no': TokenID.NOT,
         'verdadero': TokenID.TRUE,
         'falso': TokenID.FALSE,
+        'inseguro': TokenID.INSEGURO,
+        'importar_c': TokenID.IMPORTAR_C,
+        'externo': TokenID.EXTERNO,
     },
     'en': {
         'if': TokenID.IF,
@@ -40,6 +43,9 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'not': TokenID.NOT,
         'true': TokenID.TRUE,
         'false': TokenID.FALSE,
+        'unsafe': TokenID.INSEGURO,
+        'import_c': TokenID.IMPORTAR_C,
+        'extern': TokenID.EXTERNO,
     },
     'fr': {
         'si': TokenID.IF,
@@ -59,6 +65,9 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'non': TokenID.NOT,
         'vrai': TokenID.TRUE,
         'faux': TokenID.FALSE,
+        'dangereux': TokenID.INSEGURO,
+        'importer_c': TokenID.IMPORTAR_C,
+        'externe': TokenID.EXTERNO,
     },
     'pt': {
         'se': TokenID.IF,
@@ -78,6 +87,9 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'nao': TokenID.NOT,
         'verdadeiro': TokenID.TRUE,
         'falso': TokenID.FALSE,
+        'inseguro': TokenID.INSEGURO,
+        'importar_c': TokenID.IMPORTAR_C,
+        'externo': TokenID.EXTERNO,
     },
     'de': {
         'wenn': TokenID.IF,
@@ -97,6 +109,9 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'nicht': TokenID.NOT,
         'wahr': TokenID.TRUE,
         'falsch': TokenID.FALSE,
+        'unsicher': TokenID.INSEGURO,
+        'import_c': TokenID.IMPORTAR_C,
+        'extern': TokenID.EXTERNO,
     },
     'it': {
         'se': TokenID.IF,
@@ -116,6 +131,9 @@ DICCIONARIOS: Dict[str, Dict[str, TokenID]] = {
         'non': TokenID.NOT,
         'vero': TokenID.TRUE,
         'falso': TokenID.FALSE,
+        'non_sicuro': TokenID.INSEGURO,
+        'importa_c': TokenID.IMPORTAR_C,
+        'esterno': TokenID.EXTERNO,
     },
 }
 
@@ -154,6 +172,7 @@ TOKEN_UNICARACTER: dict[str, TokenID] = {
     ':': TokenID.COLON,
     ',': TokenID.COMMA,
     '.': TokenID.DOT,
+    '&': TokenID.AMPERSAND,
 }
 
 TOKEN_BICARACTER: dict[str, TokenID] = {
